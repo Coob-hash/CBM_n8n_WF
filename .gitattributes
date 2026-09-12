@@ -1,0 +1,13 @@
+# Keep code and documentation consistent across platforms.
+*.py text eol=lf
+*.js text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.mermaid text eol=lf
+.gitignore text eol=lf
+.gitattributes text eol=lf
+
+# Validation fingerprints depend on the original bytes of JSON/SQL baselines.
+# Disable newline conversion for these files; Git still provides text diffs.
+*.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+*.sql -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol

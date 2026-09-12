@@ -1,0 +1,11 @@
+{
+  "fmEmail": "REPLACE_FM_EMAIL@example.com",
+  "callbackBase": "https://REPLACE_N8N_HOST/webhook",
+  "model": "claude-sonnet-4-6",
+  "postgresCredentialId": "REPLACE_POSTGRES_CREDENTIAL_ID",
+  "postgresCredentialName": "CBM Postgres",
+  "gmailCredentialId": "REPLACE_GMAIL_CREDENTIAL_ID",
+  "gmailCredentialName": "CBM Gmail",
+  "anthropicCredentialId": "REPLACE_ANTHROPIC_CREDENTIAL_ID",
+  "anthropicCredentialName": "CBM Anthropic"
+}

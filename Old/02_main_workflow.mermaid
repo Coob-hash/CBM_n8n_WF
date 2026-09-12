@@ -1,0 +1,50 @@
+flowchart TD
+    subgraph REP["📱 Reporter"]
+        A1["Take snapshot of broken object"] --> A2["Upload to Drive /01_incoming_snapshots<br/>(simulates mobile app)"]
+    end
+
+    subgraph P1["⚙️ n8n WF1 — Intake & Dispatch"]
+        B1["Drive Trigger: fileCreated"] --> B2["Download image + parse metadata"]
+        B2 --> B3["MultiSet: POST /v1/m2m/token"]
+        B3 --> B4["MultiSet: POST /v1/vps/map/query<br/>(base64 image + intrinsics + mapCode)"]
+        B4 --> B5{"poseFound AND<br/>confidence ≥ 0.30?"}
+        B5 -- no --> B6["Ticket → NEEDS_TRIAGE<br/>✉️ FM: manual localization needed"] --> Z1(("stop"))
+        B5 -- yes --> B7["IFC Service: GET /elements/nearest<br/>(T_map→ifc applied)"]
+        B7 --> B8{"Open ticket on same<br/>IFC GlobalId?"}
+        B8 -- yes --> B9["Attach photo to existing ticket<br/>→ DUPLICATE"] --> Z2(("stop"))
+        B8 -- no --> B10["Vision LLM triage:<br/>category · severity · required skill"]
+        B10 --> B11["INSERT ticket → LOCALIZED"]
+        B11 --> B12["✉️ FM: ticket opened (info)"]
+        B11 --> C1["🗄️ SQL ranking: filter skill+zone,<br/>order by load, fairness, rating<br/>+ deterministic date/slot"]
+        C1 --> C2["Loop over candidates — ONE at a time"]
+        C2 --> C3["✉️ Technician: job offer<br/>Accept / Deny links only, fixed date"]
+        C3 --> C4["⏸ Wait (resume on webhook, 4h timeout)"]
+        C4 --> C5{"decision?"}
+        C5 -- accept --> C6["Ticket → ASSIGNED<br/>✉️ confirm tech · ✉️ notify FM"] --> Z3(("no further invites"))
+        C5 -- "deny / timeout" --> C7["Log decline"] --> C2
+        C2 -- "candidates exhausted" --> C8["Ticket → ESCALATED<br/>✉️ FM"] --> Z4(("stop"))
+    end
+
+    subgraph TECH["🔧 Technician"]
+        D1["Executes maintenance on scheduled slot"] --> D2["Upload after-photo to Drive<br/>/02_completed_snapshots as TICKET-id_after.jpg"]
+    end
+
+    subgraph P2["⚙️ n8n WF2 — Completion & Approval"]
+        E1["Drive Trigger: fileCreated"] --> E2["Parse ticket id + load ticket"]
+        E2 --> E3{"ticket exists &<br/>status = ASSIGNED/REWORK?"}
+        E3 -- no --> E4["✉️ admin: orphan upload"] --> Z5(("stop"))
+        E3 -- yes --> E5["MultiSet re-localization<br/>(position sanity check)"]
+        E5 --> E6["Vision LLM: before/after QA summary"]
+        E6 --> E7["Ticket → WORK_DONE"]
+        E7 --> E8["✉️ FM: approval request<br/>Approve / Reject links"]
+        E8 --> E9["⏸ Wait (resume on webhook, 48h timeout)"]
+        E9 --> E10{"FM decision?"}
+        E10 -- approve --> E11["IFC Service: POST /maintenance<br/>write Pset + save model_v{n}.ifc"]
+        E11 --> E12["Ticket → CLOSED<br/>✉️ all parties"] --> Z6(("ticket closed"))
+        E10 -- reject --> E13["Ticket → REWORK<br/>✉️ technician with reason"] --> D1
+        E10 -- timeout --> E14["✉️ FM reminder<br/>(stays PENDING_APPROVAL)"] --> Z7(("stop"))
+    end
+
+    A2 --> B1
+    C6 -.-> D1
+    D2 --> E1
