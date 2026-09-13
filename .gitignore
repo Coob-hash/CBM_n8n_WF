@@ -4,6 +4,7 @@
 !.env.example
 !.env.template
 deployment.local.json
+database/site.local.json
 **/credentials.json
 **/credentials.local.json
 **/token.json
@@ -49,5 +50,6 @@ Thumbs.db
 *.bak
 *.bak-*
 
-# Deliberately tracked: workflow JSON exports, phase_b/original_wf1.json,
-# configuration examples, validation report, and historical sources in Old/.
+# Deliberately tracked: workflow exports, the required Phase A baseline,
+# configuration examples and validation report.
+~$*

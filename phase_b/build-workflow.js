@@ -23,7 +23,6 @@ for (const n of original.nodes.slice(0,15)) {
 }
 const deploymentPath = process.argv[2] ? path.resolve(process.argv[2]) : path.join(__dirname,'deployment.example.json');
 const config = JSON.parse(fs.readFileSync(deploymentPath,'utf8'));
-const core = fs.readFileSync(path.join(__dirname,'dispatch-core.js'),'utf8').replace(/if \(typeof module[^\n]+/,'');
 const systemMessage = fs.readFileSync(path.join(__dirname,'system-message.txt'),'utf8');
 const id = name => crypto.createHash('sha256').update(`cbm-phase-b:${name}`).digest('hex').slice(0,32);
 const pgCred = {postgres:{id:config.postgresCredentialId,name:config.postgresCredentialName}};
@@ -37,50 +36,8 @@ function connect(connections,from,to,output=0,type='main') {
   while(connections[from][type].length<=output) connections[from][type].push([]);
   connections[from][type][output].push({node:to,type,index:0});
 }
-function subflow(nodes,connections) {return {name:'WF1 Phase B embedded operation',nodes,connections,settings:{executionOrder:'v1'}};}
-
-// Each tool has a fixed operation and a trusted request. Tool-call arguments are ignored.
-function runner(operation,create=false) {
-  const nodes=[node('Operation Input','n8n-nodes-base.executeWorkflowTrigger',{inputSource:'passthrough'},0,0,1.1),code('Bound Request','return $input.all();',220,0)];
-  const connections={}; connect(connections,'Operation Input','Bound Request');
-  let entry='Bound Request';
-  if(create) {
-    nodes.push(pg('Create or Recover Ticket',sql.CREATE,"={{ [JSON.stringify($('Bound Request').first().json)] }}",440,0,true));
-    connect(connections,entry,'Create or Recover Ticket');entry='Create or Recover Ticket';
-  }
-  function pipeline(prefix,requestName,entryName,afterName,ack=false) {
-    const at = name => prefix+name;
-    const requestRef = `$('${requestName}').first().json`;
-    nodes.push(pg(at('Load'),sql.LOAD,`={{ [JSON.stringify(${requestRef})] }}`,660,ack?600:0));
-    nodes.push(code(at('Reduce'),`${core}\nconst request = ${requestRef};\nconst row = $json.context;\nconst decision = dispatchPolicy(request,row);\nreturn [{json:{...decision,request,ticketId:row.ticket?.id,revision:row.revision,assigning:row.ticket?.status!=='ASSIGNED' && decision.state?.status==='ASSIGNED'}}];`,880,ack?600:0));
-    nodes.push(condition(at('Write?'),'={{ $json.write === true }}',1100,ack?600:0));
-    nodes.push(pg(at('Commit'),sql.COMMIT,'={{ [$json.ticketId,$json.revision,JSON.stringify($json.state),$json.assigning] }}',1320,ack?600:0));
-    nodes.push(condition(at('Committed?'),'={{ $json.applied === true }}',1540,ack?600:0));
-    nodes.push(code(at('Receipt'),`return [{json:$('${at('Reduce')}').item.json}];`,1760,ack?600:0));
-    nodes.push(code(at('Retry'),`if ($runIndex >= 4) throw new Error('Concurrent dispatch update: retry limit reached. No uncommitted email was sent.');\nreturn [{json:${requestRef}}];`,1540,ack?780:180));
-    connect(connections,entryName,at('Load'));connect(connections,at('Load'),at('Reduce'));connect(connections,at('Reduce'),at('Write?'));
-    connect(connections,at('Write?'),at('Commit'));connect(connections,at('Write?'),afterName,1);
-    connect(connections,at('Commit'),at('Committed?'));connect(connections,at('Committed?'),at('Receipt'));
-    connect(connections,at('Committed?'),at('Retry'),1);connect(connections,at('Retry'),at('Load'));connect(connections,at('Receipt'),afterName);
-  }
-  const sends = ['send_opening','offer_next','send_notices'].includes(operation);
-  const end = sends?'Mail Claimed?':'Return Result';
-  pipeline('State ','Bound Request',entry,end);
-  if(sends) {
-    nodes.push(condition('Mail Claimed?','={{ !!$json.mail }}',1980,0));
-    nodes.push(node('Gmail Send','n8n-nodes-base.gmail',{resource:'message',operation:'send',sendTo:'={{ $json.mail.to }}',subject:'={{ $json.mail.subject }}',emailType:'html',message:'={{ $json.mail.html }}',options:{appendAttribution:false}},2200,0,2.1,{credentials:gmailCred,onError:'continueRegularOutput',retryOnFail:false}));
-    nodes.push(code('Ack Request',"const claim = $('Mail Claimed?').item.json;\nreturn [{json:{...claim.request,operation:'ack',receipt:{key:claim.mail.key,claim:claim.mail.claim,message_id:typeof $json.id==='string' ? $json.id : null}}}];",2420,0));
-    connect(connections,'Mail Claimed?','Gmail Send');connect(connections,'Mail Claimed?','Return Result',1);connect(connections,'Gmail Send','Ack Request');
-    pipeline('Ack ','Ack Request','Ack Request','Return Result',true);
-  }
-  nodes.push(code('Return Result','return [{json:$json.result}];',2640,400));
-  return subflow(nodes,connections);
-}
-function boundWorkflow(workflow,operation) {
-  // Runtime values are JSON literals embedded into a Code node, never executable report text.
-  return '={{ (() => { const w = '+JSON.stringify(workflow)+'; const request = {...$("Phase B Context").first().json, operation:'+JSON.stringify(operation)+'}; w.nodes.find(n=>n.name==="Bound Request").parameters.jsCode = "return [{json:" + JSON.stringify(request) + "}];"; return JSON.stringify(w); })() }}';
-}
-function execute(name,operation,x,y) {return node(name,'n8n-nodes-base.executeWorkflow',{source:'parameter',workflowJson:boundWorkflow(runner(operation),operation),mode:'once',options:{waitForSubWorkflow:true}},x,y,1.2);}
+const saved = require('./saved-workflows').buildSavedWorkflows({config,node,code,pg,condition,connect,id});
+const execute=saved.execute;
 const w = structuredClone(original);
 const preserved = new Set(original.nodes.slice(0,15).map(n=>n.name));
 w.nodes = original.nodes.slice(0,15);
@@ -89,33 +46,30 @@ const c=w.connections;
 const add=n=>w.nodes.push(n);
 add(code('Create Ticket',"const triage=$input.first().json;\nconst sourceKey=String($('Drive Trigger - New Snapshot').first().json.id || '');\nif(!sourceKey) throw new Error('Drive source ID is required for idempotent ticket creation.');\nif(!triage.element?.global_id || !triage.position || ![triage.position.x,triage.position.y,triage.position.z,triage.confidence].every(Number.isFinite)) throw new Error('Phase B requires valid localization.');\nif(!Number.isInteger(triage.severity) || triage.severity<1 || triage.severity>5 || !['carpentry','plumbing','electrical','hvac','general'].includes(triage.required_skill)) throw new Error('Invalid Phase A triage contract.');\nreturn [{json:{sourceKey,triage,ticketId:null}}];",2040,-280));
 add(code('Phase B Context',`const config=${JSON.stringify(config,null,2)};\nif(!config.callbackBase.startsWith('https://') || config.callbackBase.includes('REPLACE') || config.fmEmail.includes('REPLACE')) throw new Error('Configure Phase B deployment values before activating WF1.');\nconst input=$input.first().json;\nreturn [{json:{sourceKey:input.sourceKey||null,ticketId:input.ticketId||null,triage:input.triage||null,config}}];`,2260,-280));
-add(execute('Read Dispatch Memory','read',2480,-280));
-add(node('Dispatch Agent','@n8n/n8n-nodes-langchain.agent',{promptType:'define',text:'={{ "Process this maintenance dispatch event. Trusted tool snapshot follows. Use get_context after mutations. " + JSON.stringify($json) }}',options:{systemMessage,maxIterations:12,returnIntermediateSteps:false,passthroughBinaryImages:false}},2700,-280,2,{onError:'continueRegularOutput'}));
+add(pg('Read Dispatch Memory',sql.PUBLIC_CONTEXT,'={{ [JSON.stringify($("Phase B Context").first().json)] }}',2480,-280));
+add(node('Dispatch Agent','@n8n/n8n-nodes-langchain.agent',{promptType:'define',text:'={{ "Process this maintenance dispatch event. Current ticket facts follow. Decide which tools to use to complete the dispatch objectives. " + JSON.stringify($json.context) }}',options:{systemMessage,maxIterations:24,returnIntermediateSteps:false,passthroughBinaryImages:false}},2700,-280,2,{onError:'continueRegularOutput'}));
 add(node('Dispatch Claude Model','@n8n/n8n-nodes-langchain.lmChatAnthropic',{model:{__rl:true,value:config.model,mode:'id'},options:{temperature:0,maxTokensToSample:2000}},2640,-20,1.3,{credentials:{anthropicApi:{id:config.anthropicCredentialId,name:config.anthropicCredentialName}}}));
-add(execute('Verify Committed Outcome','read',3000,-280));
-add(condition('Dispatch Settled?','={{ ["WAITING","ASSIGNED","ESCALATED"].includes($json.outcome) }}',3220,-280));
+add(pg('Verify Committed Outcome',sql.PUBLIC_CONTEXT,'={{ [JSON.stringify($("Phase B Context").first().json)] }}',3000,-280));
+add(condition('Dispatch Settled?','={{ ["WAITING","ASSIGNED","ESCALATED"].includes($json.context.outcome) }}',3220,-280));
 add(execute('Record Incomplete Execution','failure',3440,-60));
-add(condition('Operator Alert Needed?','={{ ["OPERATOR_ACTION_REQUIRED","NO_TICKET","UNINITIALIZED"].includes($json.outcome) }}',3660,-60));
-add(node('Notify FM - Dispatch Error','n8n-nodes-base.gmail',{resource:'message',operation:'send',sendTo:config.fmEmail,subject:'={{ "[CBM] Dispatch requires attention - ticket " + ($json.ticket_id || "not yet initialized") }}',emailType:'text',message:'={{ "Automatic dispatch needs operator attention. Inspect the failed WF1 execution and its tool receipts before retrying any email. " + JSON.stringify($json) }}',options:{appendAttribution:false}},3880,100,2.1,{credentials:gmailCred,onError:'continueRegularOutput',retryOnFail:false}));
+add(condition('Operator Alert Needed?','={{ ["OPERATOR_ACTION_REQUIRED","NO_TICKET","UNINITIALIZED"].includes($json.context.outcome) }}',3660,-60));
+add(node('Notify FM - Dispatch Error','n8n-nodes-base.gmail',{resource:'message',operation:'send',sendTo:config.fmEmail,subject:'={{ "[CBM] Dispatch requires attention - ticket " + ($json.context?.ticket_id || "not yet initialized") }}',emailType:'text',message:'={{ "Automatic dispatch needs operator attention. Inspect the failed WF1 execution and its tool receipts before retrying any email. " + JSON.stringify($json) }}',options:{appendAttribution:false}},3880,100,2.1,{credentials:gmailCred,onError:'continueRegularOutput',retryOnFail:false}));
 add(node('Phase B Needs Attention','n8n-nodes-base.stopAndError',{errorType:'errorMessage',errorMessage:'={{ "Phase B incomplete: " + JSON.stringify($("Record Incomplete Execution").first().json) + ". Persisted dispatches retry up to three times; uninitialized tickets and uncertain Gmail delivery require operator action." }}'},4100,-60,1));
 connect(c,'Create Ticket','Phase B Context');connect(c,'Phase B Context','Read Dispatch Memory');connect(c,'Read Dispatch Memory','Dispatch Agent');
 connect(c,'Dispatch Claude Model','Dispatch Agent',0,'ai_languageModel');connect(c,'Dispatch Agent','Verify Committed Outcome');connect(c,'Verify Committed Outcome','Dispatch Settled?');
 connect(c,'Dispatch Settled?','Record Incomplete Execution',1);connect(c,'Record Incomplete Execution','Operator Alert Needed?');
 connect(c,'Operator Alert Needed?','Notify FM - Dispatch Error');connect(c,'Operator Alert Needed?','Phase B Needs Attention',1);connect(c,'Notify FM - Dispatch Error','Phase B Needs Attention');
-const toolDescriptions={
-  initialize:['create_ticket','Create or recover this ticket and initialize its durable dispatch memory. Call when NO_TICKET or UNINITIALIZED. Input may be empty; all data is bound securely from WF1.'],
-  read:['get_context','Read authoritative ticket state, candidate ranking, offer history, deadlines and next_actions. This is your persistent memory. Call after mutations. Input ignored.'],
-  send_opening:['send_opening','Send the opening notice to the configured facility manager. Idempotent after a confirmed receipt. Input ignored.'],
-  offer_next:['offer_next','Select the next SQL-ranked eligible technician, reserve capacity, and send one fixed-date offer. Urgent cap=2, ordinary cap=1. Call again if next_actions still contains offer_next. Input ignored.'],
-  process_events:['process_events','Apply persisted validated Accept/Deny responses in receipt order, expire offers at their deadlines, atomically assign one winner and withdraw competing offers. Input ignored.'],
-  send_notices:['send_notices','Send one pending confirmation, withdrawal, or escalation notification. Repeat while next_actions includes send_notices. Recipients and content are fixed. Input ignored.'],
-  escalate:['escalate','Escalate when no eligible candidates remain or the urgent appointment starts without acceptance. Tool verifies that no valid offer or assignment prevents escalation. Input ignored.']
-};
-let t=0;
-for(const [operation,[name,description]] of Object.entries(toolDescriptions)) {
-  add(node(name,'@n8n/n8n-nodes-langchain.toolWorkflow',{name,description,source:'parameter',workflowJson:boundWorkflow(runner(operation,operation==='initialize'),operation)},2360+180*t++,260,2.1));
-  connect(c,name,'Dispatch Agent',0,'ai_tool');
+// Simple operations use native Postgres AI tools directly.
+for(const [name,query,description,x] of [
+  ['create_ticket',sql.CREATE,'Create or recover the current ticket using fixed parameterized SQL. Returns its ID. Source identity and validated triage are bound by WF1. If dispatch is uninitialized, initialize it using the separate tool.',2200],
+  ['get_context',sql.PUBLIC_CONTEXT,'Read authoritative ticket facts, shortlist order, offers, deadlines, response counts and pending notice keys. No chat history, secret tokens, email bodies or prescribed tool sequence is returned.',2380]
+]) {
+  const tool=pg(name,query,'={{ [JSON.stringify($("Phase B Context").first().json)] }}',x,280,name==='create_ticket');
+  tool.type='n8n-nodes-base.postgresTool';
+  tool.parameters.descriptionType='manual';tool.parameters.toolDescription=description;
+  add(tool);connect(c,name,'Dispatch Agent',0,'ai_tool');
 }
+for(const tool of saved.tools){add(tool);connect(c,tool.name,'Dispatch Agent',0,'ai_tool');}
 add(node('Phase B Recovery Tick','n8n-nodes-base.scheduleTrigger',{rule:{interval:[{field:'minutes',minutesInterval:1}]}},2040,700,1.2));
 add(pg('Find Due Dispatch',sql.DUE,'={{ [] }}',2260,700));
 add(code('Recovery Ticket Context','return [{json:{ticketId:$json.ticket_id}}];',2480,700));
@@ -143,12 +97,21 @@ for(const method of ['GET','POST']) {
     connect(c,queryName,'Response Receipt');connect(c,'Response Receipt','Acknowledge Response');connect(c,'Acknowledge Response','New Response?');connect(c,'New Response?','Response Ticket Context');connect(c,'Response Ticket Context','Phase B Context');
   }
 }
-add(node('Note 2260x-120','n8n-nodes-base.stickyNote',{content:'## Phase B — Agent Dispatch\nOne Claude Tools Agent; SQL-backed durable memory and guarded Gmail tools.\nOrdinary: one live offer, 48 hours. Urgent (severity ≥4): up to two live offers, expiry=min(48 hours, appointment start). First valid acceptance wins.\nResponses are confirmed by POST and persisted before the agent runs. Recovery checks run every minute without LLM calls while nothing is due.\nConfigure deployment.example.json and rebuild before importing. Phase A is preserved.',width:1100,height:230,color:4},2260,-650));
+add(node('Note 2260x-120','n8n-nodes-base.stickyNote',{content:'## Phase B — Agent Dispatch\nNative Postgres tools plus saved dispatch sub-workflows. No embedded workflow JSON. The agent chooses calls from current facts; policy guards enforce dispatch rules.\nOrdinary: one live offer, 48 hours. Urgent (severity ≥4): up to two live offers, expiry=min(48 hours, appointment start). First valid acceptance wins.\nResponses are confirmed by POST and persisted before the agent runs. Recovery checks run every minute without LLM calls while nothing is due.\nImport and publish helpers from phase_b/workflows, bind their IDs, then import WF1. See phase_b/README.md. Phase A is preserved.',width:1100,height:230,color:4},2260,-650));
 // n8n serves HTML in a sandboxed iframe; a form needs an absolute action URL.
 const formNode=w.nodes.find(n=>n.name==='Build Confirmation Form');
 const action=new URL(config.callbackBase.replace(/\/$/,'')+'/cbm-wf1-offer').href;
 formNode.parameters.jsCode=formNode.parameters.jsCode.replace('<form method="post">','<form method="post" action="'+action+'">');
 fs.writeFileSync(workflowPath,JSON.stringify(w,null,2)+'\n');
-fs.writeFileSync(path.join(__dirname,'embedded-operation.example.json'),JSON.stringify(runner('offer_next'),null,2)+'\n');
-console.log(`Updated WF1: ${preserved.size} original nodes preserved; ${w.nodes.length-preserved.size} Phase B nodes. Backup: phase_b/original_wf1.json`);
-module.exports={runner,boundWorkflow,workflow:w};
+const helpersPath=path.join(__dirname,'workflows');
+fs.mkdirSync(helpersPath,{recursive:true});
+for(const [operation,workflow] of Object.keys(saved.definitions).map((op,i)=>[op,saved.workflows[i]]))
+  fs.writeFileSync(path.join(helpersPath,operation+'.json'),JSON.stringify(workflow,null,2)+'\n');
+fs.writeFileSync(path.join(__dirname,'workflow-manifest.json'),JSON.stringify({
+  main:'../wf1_ticket_intake_and_dispatch.json',
+  workflowIds:saved.workflowIds,
+  helpers:Object.entries(saved.definitions).map(([operation,[name]])=>({operation,name,id:saved.workflowIds[operation],file:'workflows/'+operation+'.json'})),
+  production:'Import helpers first; verify or rebind IDs and publish them. Then import/review/publish WF1.'
+},null,2)+'\n');
+console.log(`Updated WF1: ${preserved.size} Phase A nodes preserved; 2 native Postgres tools and 5 saved-workflow tools. Generated ${saved.workflows.length} helper workflows.`);
+module.exports={workflow:w,helpers:saved.workflows};

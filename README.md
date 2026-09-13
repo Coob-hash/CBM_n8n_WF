@@ -1,39 +1,56 @@
-# Community-Based Maintenance — n8n and Python
+# CBM
 
-Application source for maintenance ticket intake, technician dispatch, and IFC-related services. This directory is the Git repository root. The initial commit captures the current application, including the agent-based WF1 Phase B implementation.
+Maintenance ticket intake, technician dispatch and IFC services.
 
-## Application files
+## Project layout
 
-- `wf1_ticket_intake_and_dispatch.json`: complete WF1 import, including original intake/localization and the agent dispatch section.
-- `n8n_wf2_completion_approval_ifc_update.json`: completion, facility-manager approval, and IFC update workflow.
-- `ifc_service.py`: FastAPI IFC and capture-normalization service.
-- `capture_normalize.py`, `calibrate_registration.py`, `create_sample_ifc.py`: supporting Python utilities.
-- `schema.sql`: supplied PostgreSQL schema and demonstration data.
-- `phase_b/`: dispatch source, generator, configuration template, tests, and implementation guide.
-- `Old/`: historical project drafts retained for reference.
+| Path | Purpose |
+|---|---|
+| `wf1_ticket_intake_and_dispatch.json` | Current WF1 export with native Postgres tools and the dispatch agent |
+| `n8n_wf2_completion_approval_ifc_update.json` | Completion, facility-manager approval and IFC update workflow |
+| `phase_b/workflows/` | Seven saved helper workflows required by WF1 |
+| `phase_b/` | Dispatch source, builder, configuration and tests |
+| `database/` | Approved PostgreSQL schema, migration runner, transaction functions and database tests |
+| `phase_a/` | Source for the current image-preparation node |
+| `ifc_service.py`, `capture_normalize.py` | IFC API and image normalization |
+| `calibrate_registration.py`, `create_sample_ifc.py` | Registration calibration and sample model utilities |
+| `schema.sql` | Legacy schema fixture used by the current workflow exports |
+| `docs/WF1_Native_Tools_Guide.docx` | Current architecture and node-by-node explanation |
 
-See `phase_b/README.md` for configuring and importing WF1, and `tutorial_nodes_1-7_localization.md` for localization setup. Existing WF2/schema compatibility limitations are documented in the Phase B guide.
+## Configure and import
 
-## Versioning workflow
+The new 27-table database is implemented separately under the PostgreSQL `cbm` schema. See [database setup](database/README.md) for migrations and validation. The existing workflow exports have not yet been switched to this new database contract.
 
-Track the application code, SQL, documentation, and n8n JSON exports together. The workflow JSON is generated from the Phase B helpers, so change those helpers and regenerate when modifying dispatch logic. Local deployment values belong in ignored `phase_b/deployment.local.json`; retain placeholders in the tracked deployment example. Do not commit actual credentials or API keys embedded in exported n8n nodes.
+Follow [the dispatch guide](phase_b/README.md) to configure `phase_b/deployment.local.json`, import the seven helpers, bind their IDs and import WF1. The exported workflows contain template settings. Configure the existing Phase A service endpoints and credentials in n8n as well.
 
-From the repository root, local checks can be run with:
+The private local deployment file is retained and ignored by Git. No workflow is activated by rebuilding these files.
+
+## Build and test
+
+From this directory, with Node.js available:
 
 ```powershell
+node .\phase_b\build-workflow.js
 node .\phase_b\setup-test-runtime.js
 node .\phase_b\test-dispatch.js
 ```
 
-The test runtime is downloaded on first setup and is ignored by Git. Python virtual environments, caches, incidental backups, logs, and generated IFC files in `models/` are also ignored. The original WF1 backup and the validation report are intentionally tracked.
+The first command regenerates template exports. Pass `phase_b/deployment.local.json` to the builder for locally configured exports; keep those private. Test setup downloads the isolated PGlite runtime on demand into an ignored cache.
 
-For subsequent changes:
+For the Python service, install its dependencies in a virtual environment:
 
 ```powershell
-git status
-git diff
-git add <changed-files>
-git commit -m "Describe the application change"
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install fastapi uvicorn "ifcopenshell>=0.8" numpy pydantic Pillow
+python create_sample_ifc.py
+uvicorn ifc_service:app --host 0.0.0.0 --port 8000
 ```
 
-The repository starts locally on `main`. A remote host can be connected separately when needed.
+Sample model creation is optional. `ifc_service.py` documents the IFC model directory, axis mapping and registration configuration. Its image-normalization endpoint is used by the current Phase A node.
+
+## Validation and versioning
+
+The 25 local dispatch tests pass. Live n8n, Gmail, model and Python service integration still require environment-specific checks. Existing WF2/schema compatibility limitations are listed in the dispatch guide.
+
+Git history is preserved. Track source and template exports together; do not commit private deployment values. `phase_b/original_wf1.json` is a required builder and regression-test fixture, not an alternate workflow to import.

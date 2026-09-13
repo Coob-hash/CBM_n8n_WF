@@ -4,7 +4,7 @@ const fs=require('node:fs');
 const path=require('node:path');
 const crypto=require('node:crypto');
 const {PGlite}=require('./.test-runtime/pglite/dist/index.cjs');
-const {dispatchPolicy}=require('./dispatch-core');
+const {dispatchPolicy}=require('./operations');
 const sql=require('./queries');
 const root=path.resolve(__dirname,'..');
 const results=[];
@@ -22,6 +22,8 @@ async function commit(row,decision) {
 async function operation(request,operation,extra={},now=null) {
   const r={...request,...extra,operation};
   const row=await load(r);if(now)row.now=now;
+  if(operation==='offer_next'&&r.technicianId===undefined)r.technicianId=dispatchPolicy({...r,operation:'read'},row).result.available_candidate_ids?.[0];
+  if(operation==='send_notices'&&r.noticeKey===undefined)r.noticeKey=Object.values(row.state.messages).find(m=>m.status==='PENDING'&&m.key!=='opening'&&!m.key.startsWith('offer:'))?.key;
   const d=dispatchPolicy(r,row);
   if(d.write)assert.equal(await commit(row,d),true);
   return d;
@@ -44,40 +46,52 @@ async function response(request,offer,decision='accept',token=offer.token) {
     return (await tx.query(sql.RECORD_RESPONSE.slice(sql.RECORD_RESPONSE.indexOf(';')+1),[request.ticketId,offer.id,token,decision])).rows[0].response_result;
   });
 }
-async function drainNotices(r){for(let n=0;n<10;n++){const d=await operation(r,'read');if(!d.result.next_actions.includes('send_notices'))return;await send(r,'send_notices');}throw new Error('notice loop');}
-async function embeddedTool(name,request,failMail=false,conflictOnce=false){
+async function drainNotices(r){for(let n=0;n<10;n++){const d=await operation(r,'read');if(!d.result.notices.some(m=>m.status==='PENDING'&&m.key!=='opening'&&!m.key.startsWith('offer:')))return;await send(r,'send_notices');}throw new Error('notice loop');}
+async function embeddedTool(name,request,failMail=false,conflictOnce=false,provided={}) {
   const w=JSON.parse(fs.readFileSync(path.join(root,'wf1_ticket_intake_and_dispatch.json'),'utf8'));
-  const tool=w.nodes.find(n=>n.name===name);
-  const expression=tool.parameters.workflowJson.slice(3,-2).trim();
-  const workflow=JSON.parse(new Function('$','return ('+expression+');')(()=>({first:()=>({json:request})})));
-  const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
-  const outputs={},counts={},mail=[];
-  let current=workflow.nodes.find(n=>n.type==='n8n-nodes-base.executeWorkflowTrigger').name,items=[{json:{query:'ignored hostile tool input'}}];
-  const dollar=name=>({first:()=>outputs[name]?.[0],last:()=>outputs[name]?.at(-1),item:outputs[name]?.[0]});
-  const evaluate=(value,input)=>value.startsWith('={{')?new Function('$','$json','return ('+value.slice(3,-2).trim()+');')(dollar,input):value;
-  for(let step=0;step<100;step++){
-    const n=workflow.nodes.find(x=>x.name===current);let branch=0;
-    const input=items[0]?.json;const index=counts[current]||0;counts[current]=index+1;
-    if(n.type==='n8n-nodes-base.code')items=await new AsyncFunction('$json','$input','$','$runIndex',n.parameters.jsCode)(input,{first:()=>items[0],all:()=>items},dollar,index);
-    else if(n.type==='n8n-nodes-base.if')branch=evaluate(n.parameters.conditions.conditions[0].leftValue,input)?0:1;
-    else if(n.type==='n8n-nodes-base.postgres'){
-      const params=evaluate(n.parameters.options.queryReplacement,input);
-      const query=n.parameters.query;
-      let rows;
-      if(query===sql.CREATE)rows=await db.transaction(async tx=>{await tx.exec('LOCK TABLE tickets IN SHARE ROW EXCLUSIVE MODE');return (await tx.query(query.slice(query.indexOf(';')+1),params)).rows;});
-      else if(query===sql.COMMIT && conflictOnce){conflictOnce=false;rows=[{applied:false}];}
-      else rows=(await db.query(query,params)).rows;
-      items=rows.map(json=>({json}));
-    }else if(n.type==='n8n-nodes-base.gmail'){
-      mail.push({to:evaluate(n.parameters.sendTo,input),subject:evaluate(n.parameters.subject,input)});
-      items=[{json:failMail?{error:'simulated provider timeout'}:{id:'mock-gmail-'+crypto.randomUUID()}}];
-    }
-    outputs[current]=items;
-    const edge=workflow.connections[current]?.main?.[branch]?.[0];
-    if(!edge)return {result:items[0].json,mail};
-    current=edge.node;
+  const manifest=JSON.parse(fs.readFileSync(path.join(__dirname,'workflow-manifest.json'),'utf8'));
+  const helpers=new Map(manifest.helpers.map(h=>[h.id,JSON.parse(fs.readFileSync(path.join(__dirname,h.file),'utf8'))]));
+  const aliases={offer_next:'send_offer',send_notices:'send_notice'};
+  const tool=w.nodes.find(n=>n.name===(aliases[name]||name));
+  const row=await load(request),ctx=dispatchPolicy({...request,operation:'read'},row).result;
+  const inputs={technician_id:ctx.available_candidate_ids?.[0],notice_key:ctx.notices?.find(m=>m.status==='PENDING'&&m.key!=='opening'&&!m.key.startsWith('offer:'))?.key,...provided};
+  const mail=[];let conflicting=conflictOnce;
+  const fromAI=key=>inputs[key];
+  const evaluate=(v,dollar,input)=>typeof v==='string'&&v.startsWith('={{')?new Function('$','$json','$fromAI','return ('+v.slice(3,-2).trim()+');')(dollar,input,fromAI):v;
+  const params=(n,dollar,input)=>evaluate(n.parameters.options.queryReplacement,dollar,input);
+  async function postgres(n,values){
+    const query=n.parameters.query;
+    if(query===sql.CREATE)return db.transaction(async tx=>{await tx.exec('LOCK TABLE tickets IN SHARE ROW EXCLUSIVE MODE');return (await tx.query(query.slice(query.indexOf(';')+1),values)).rows;});
+    if(query===sql.COMMIT&&conflicting){conflicting=false;return [{applied:false}];}
+    return (await db.query(query,values)).rows;
   }
-  throw new Error('Embedded operation exceeded step bound');
+  async function execute(workflow,initial){
+    const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
+    const outputs={},counts={};let current=workflow.nodes.find(n=>n.type==='n8n-nodes-base.executeWorkflowTrigger').name,items=[{json:initial}];
+    const dollar=name=>({first:()=>outputs[name]?.[0],item:outputs[name]?.[0]});
+    for(let step=0;step<120;step++){
+      const n=workflow.nodes.find(x=>x.name===current),input=items[0]?.json,index=counts[current]||0;counts[current]=index+1;let branch=0;
+      if(n.type==='n8n-nodes-base.code')items=await new AsyncFunction('$json','$input','$','$runIndex',n.parameters.jsCode)(input,{first:()=>items[0],all:()=>items},dollar,index);
+      else if(n.type==='n8n-nodes-base.if')branch=evaluate(n.parameters.conditions.conditions[0].leftValue,dollar,input)?0:1;
+      else if(n.type==='n8n-nodes-base.postgres')items=(await postgres(n,params(n,dollar,input))).map(json=>({json}));
+      else if(n.type==='n8n-nodes-base.gmail'){
+        mail.push({to:evaluate(n.parameters.sendTo,dollar,input),subject:evaluate(n.parameters.subject,dollar,input)});
+        items=[{json:failMail?{error:'simulated timeout'}:{id:'mock-gmail-'+crypto.randomUUID()}}];
+      }else if(n.type==='n8n-nodes-base.executeWorkflow'){
+        const values=Object.fromEntries(Object.entries(n.parameters.workflowInputs.value).map(([k,v])=>[k,evaluate(v,dollar,input)]));
+        assert.equal(n.parameters.source,'database');items=await execute(helpers.get(n.parameters.workflowId.value),values);
+      }
+      outputs[current]=items;const edge=workflow.connections[current]?.main?.[branch]?.[0];if(!edge)return items;current=edge.node;
+    }throw new Error('Saved workflow exceeded execution bound');
+  }
+  const dollar=()=>({first:()=>({json:request})});let items;
+  if(tool.type==='n8n-nodes-base.postgresTool')items=(await postgres(tool,params(tool,dollar,request))).map(json=>({json}));
+  else {
+    assert.equal(tool.parameters.source,'database');
+    const values=Object.fromEntries(Object.entries(tool.parameters.workflowInputs.value).map(([k,v])=>[k,evaluate(v,dollar,request)]));
+    items=await execute(helpers.get(tool.parameters.workflowId.value),values);
+  }
+  return {result:items[0].json.context||items[0].json,mail};
 }
 async function main(){
   db=new PGlite();
@@ -88,7 +102,7 @@ async function main(){
     const after=JSON.parse(fs.readFileSync(path.join(root,'wf1_ticket_intake_and_dispatch.json'),'utf8'));
     assert.deepEqual(after.nodes.slice(0,15),before.nodes.slice(0,15));
     for(const n of before.nodes.slice(0,15))assert.deepEqual(after.connections[n.name],before.connections[n.name]);
-    for(const [f,hash] of Object.entries({'n8n_wf2_completion_approval_ifc_update.json':'ABF8175A8535E9FF6282571D2CAA73F77B30D66D8998FCA776C3FBDC3FDC4872','schema.sql':'EF8220CFEB2978E3AAF088253C6A74E02CE2B3C4CA9860F61148C49A7FE3AE3D'}))assert.equal(crypto.createHash('sha256').update(fs.readFileSync(path.join(root,f))).digest('hex').toUpperCase(),hash);
+    for(const [f,hash] of Object.entries({'n8n_wf2_completion_approval_ifc_update.json':'DAE5A93101E8CF236036D63C6688E7E9B316F8A493B426E2671AE00CC46A1006','schema.sql':'EF8220CFEB2978E3AAF088253C6A74E02CE2B3C4CA9860F61148C49A7FE3AE3D'}))assert.equal(crypto.createHash('sha256').update(fs.readFileSync(path.join(root,f))).digest('hex').toUpperCase(),hash);
   });
   await run('Idempotent creation, element deduplication, bound existing ticket',async()=>{
     const r=await fixture();const id=r.ticketId;
@@ -96,6 +110,65 @@ async function main(){
     assert.equal((await create({...r,ticketId:null,sourceKey:'different-source'})).ticket_id,id);
     assert.equal((await create({ticketId:id,config:cfg,sourceKey:null,triage:null})).ticket_id,id);
     assert.equal((await db.query('SELECT count(*) AS n FROM tickets WHERE ifc_global_id=$1',[r.triage.element.global_id])).rows[0].n,1);
+  });
+  await run('Native Postgres creation and saved initialization work with a bound source before an ID exists',async()=>{
+    const seed=await fixture(3),key=crypto.randomUUID();
+    const r={...seed,ticketId:null,sourceKey:key,triage:{...seed.triage,element:{...seed.triage.element,global_id:key}}};
+    assert.equal((await embeddedTool('get_context',r)).result.outcome,'NO_TICKET');
+    const created=await embeddedTool('create_ticket',r);assert.ok(created.result.ticket_id);
+    assert.equal((await embeddedTool('create_ticket',r)).result.ticket_id,created.result.ticket_id);
+    assert.equal((await embeddedTool('get_context',r)).result.outcome,'UNINITIALIZED');
+    const initialized=await embeddedTool('initialize_dispatch',r);assert.equal(initialized.result.initialized,true);
+    assert.equal(initialized.result.opening_status,'PENDING');
+    const sent=await embeddedTool('send_notice',r,false,false,{notice_key:'opening'});assert.equal(sent.mail.length,1);
+    assert.equal(sent.result.opening_status,'SENT');
+  });
+  await run('Native context exposes facts without operation scripts, bearer tokens, bodies or config',async()=>{
+    const r=await fixture(3);await send(r);const row=await load(r);
+    const result=(await embeddedTool('get_context',r)).result;
+    assert.equal(result.next_actions,undefined);assert.equal(result.active_offer_count,1);
+    assert.ok(!j(result).includes(row.state.offers[0].token));assert.ok(!j(result).includes('callbackBase'));
+    assert.ok(!j(result).includes('<h3>'));assert.equal(result.candidates.length,5);
+    assert.deepEqual(result.available_candidate_ids,dispatchPolicy({...r,operation:'read'},row).result.available_candidate_ids);
+  });
+  await run('Agent-supplied technician and notice inputs are used and rejected when invalid',async()=>{
+    const r=await fixture(5),initial=await load(r),wrong=initial.state.shortlist[1];
+    const rejected=await embeddedTool('send_offer',r,false,false,{technician_id:wrong});
+    assert.equal(rejected.mail.length,0);assert.equal(rejected.result.operation_result.reason,'TECHNICIAN_MUST_BE_NEXT_RANKED_ELIGIBLE_CANDIDATE');
+    assert.equal((await embeddedTool('send_notice',r,false,false,{notice_key:'invented'})).mail.length,0);
+    const allowed=await embeddedTool('send_offer',r,false,false,{technician_id:initial.state.shortlist[0]});assert.equal(allowed.mail.length,1);
+    assert.equal((await embeddedTool('send_offer',r,false,false,{technician_id:initial.state.shortlist[0]})).mail.length,0);
+  });
+  await run('Native read detects a lost receipt and the fixed failure workflow persists the halt',async()=>{
+    const r=await fixture(3);await operation(r,'offer_next');let row=await load(r);
+    const m=Object.values(row.state.messages).find(m=>m.status==='SENDING');
+    m.claimed_at=new Date(Date.now()-310000).toISOString();row.state.next_wake=new Date(Date.now()-10000).toISOString();
+    assert.equal(await commit(row,{state:row.state}),true);
+    assert.equal((await embeddedTool('get_context',r)).result.outcome,'OPERATOR_ACTION_REQUIRED');
+    assert.equal((await embeddedTool('Record Incomplete Execution',r)).result.outcome,'OPERATOR_ACTION_REQUIRED');
+    row=await load(r);assert.equal(row.state.halted,true);assert.equal(Object.values(row.state.messages).find(x=>x.key===m.key).status,'UNCERTAIN');
+  });
+  await run('Tickets created before initialization have bounded recovery and failure auditing',async()=>{
+    const seed=await fixture(3),key=crypto.randomUUID();
+    const r={...seed,ticketId:null,sourceKey:key,triage:{...seed.triage,element:{...seed.triage.element,global_id:key}}};
+    const previousDb=db;db=new PGlite();
+    try {
+      await db.exec(fs.readFileSync(path.join(root,'schema.sql'),'utf8'));
+      await embeddedTool('create_ticket',r);
+      const ticketId=(await load(r)).ticket.id;
+      await db.query("UPDATE tickets SET created_at=clock_timestamp()-interval '2 minutes' WHERE id=$1",[ticketId]);
+      assert.deepEqual((await db.query(sql.DUE)).rows,[{ticket_id:ticketId}]);
+      for(let i=0;i<2;i++){
+        assert.equal((await embeddedTool('Record Incomplete Execution',r)).result.outcome,'UNINITIALIZED');
+        assert.deepEqual((await db.query(sql.DUE)).rows,[]);
+        await db.query("UPDATE ticket_events SET created_at=clock_timestamp()-interval '2 minutes' WHERE ticket_id=$1 AND event='CBM_INIT_FAILURE'",[ticketId]);
+        assert.deepEqual((await db.query(sql.DUE)).rows,[{ticket_id:ticketId}]);
+      }
+      assert.equal((await embeddedTool('Record Incomplete Execution',r)).result.outcome,'OPERATOR_ACTION_REQUIRED');
+      assert.equal((await load(r)).init_failures,3);
+      await db.query("UPDATE ticket_events SET created_at=clock_timestamp()-interval '2 minutes' WHERE ticket_id=$1 AND event='CBM_INIT_FAILURE'",[ticketId]);
+      assert.deepEqual((await db.query(sql.DUE)).rows,[]);
+    }finally{await db.close();db=previousDb;}
   });
   await run('SQL filters eligibility and keeps five ranked candidates; messages escape report HTML',async()=>{
     const r=await fixture();const row=await load(r);
@@ -150,7 +223,7 @@ async function main(){
   });
   await run('Concurrent snapshots cannot both reserve capacity or overwrite a winner',async()=>{
     const r=await fixture(3),first=await load(r),second=await load(r);
-    const a=dispatchPolicy({...r,operation:'offer_next'},first),b=dispatchPolicy({...r,operation:'offer_next'},second);
+    const a=dispatchPolicy({...r,operation:'offer_next',technicianId:first.state.shortlist[0]},first),b=dispatchPolicy({...r,operation:'offer_next',technicianId:second.state.shortlist[0]},second);
     assert.equal(await commit(first,a),true);assert.equal(await commit(second,b),false);
     assert.equal((await load(r)).state.offers.length,1);
     const o=a.state.offers[0];await response(r,o);await operation(r,'process_events');
@@ -210,7 +283,7 @@ async function main(){
     const due=await db.query(sql.DUE);assert.ok(due.rows.length<=1);
     if(due.rows.length)assert.equal((await load({ticketId:due.rows[0].ticket_id})).state.halted,false);
   });
-  await run('Embedded tool graphs execute their actual Code/SQL/If branches with mocked Gmail',async()=>{
+  await run('Saved workflows and nested receipt workflow execute Code/SQL/If paths with mocked Gmail',async()=>{
     const r=await fixture(5);
     const first=await embeddedTool('offer_next',r,false,true);
     assert.equal(first.mail.length,1);assert.equal(first.result.offers.length,1);
@@ -250,22 +323,26 @@ async function main(){
       for(const n of workflow.nodes){
         expressions(n.parameters);
         if(n.type==='n8n-nodes-base.code'){new AsyncFunction('$json','$input','$','$runIndex',n.parameters.jsCode);compiled++;}
-        if(n.parameters.workflowJson){
-          const expr=n.parameters.workflowJson.slice(3,-3).trim();
-          const fakeContext={sourceKey:'test',ticketId:1,config:cfg,triage:{description:'"; throw new Error("injected");//'}};
-          const json=new Function('$','return ('+expr+');')(()=>({first:()=>({json:fakeContext})}));
-          const sub=JSON.parse(json);validate(sub);
-          const bound=sub.nodes.find(x=>x.name==='Bound Request');
-          const returned=awaitableBound(bound.parameters.jsCode);
-          assert.equal(returned[0].json.ticketId,1);
-          assert.equal(returned[0].json.triage.description,fakeContext.triage.description);
-        }
+        assert.equal(n.parameters.workflowJson,undefined,'No embedded workflow JSON is allowed');
       }
     }
-    function awaitableBound(code){return new Function(code)();}
-    validate(w);assert.ok(compiled>50);
+    const manifest=JSON.parse(fs.readFileSync(path.join(__dirname,'workflow-manifest.json'),'utf8'));
+    validate(w);for(const helper of manifest.helpers)validate(JSON.parse(fs.readFileSync(path.join(__dirname,helper.file),'utf8')));assert.ok(compiled>15);
+    assert.equal(w.nodes.filter(n=>n.type==='n8n-nodes-base.postgresTool').length,2);
+    assert.ok(!JSON.stringify(w).includes('next_actions'));
     assert.equal(w.nodes.filter(n=>n.type==='@n8n/n8n-nodes-langchain.agent').length,1);
-    assert.equal(w.nodes.filter(n=>n.type==='@n8n/n8n-nodes-langchain.toolWorkflow').length,7);
+    assert.equal(w.nodes.filter(n=>n.type==='@n8n/n8n-nodes-langchain.toolWorkflow').length,5);
+    const byId=new Map(manifest.helpers.map(h=>[h.id,JSON.parse(fs.readFileSync(path.join(__dirname,h.file),'utf8'))]));
+    for(const graph of [w,...byId.values()])for(const n of graph.nodes){
+      if(!n.parameters.workflowId)continue;
+      const child=byId.get(n.parameters.workflowId.value);assert.ok(child,'Every saved reference resolves in the package');
+      const inputFields=child.nodes[0].parameters.workflowInputs.values;
+      assert.deepEqual(Object.keys(n.parameters.workflowInputs.value).sort(),inputFields.map(f=>f.name).sort());
+      assert.equal(n.parameters.source,'database');
+    }
+    assert.ok(w.nodes.find(n=>n.name==='send_offer').parameters.workflowInputs.value.technicianId.includes('$fromAI'));
+    assert.ok(!w.nodes.find(n=>n.name==='send_offer').parameters.workflowInputs.value.ticketId.includes('$fromAI'));
+    assert.ok(!w.nodes.some(n=>n.name==='ack'));
   });
   await db.close();
   const report={passed:results.length,tests:results,sql_runtime:'PGlite 0.5.8 (PostgreSQL WASM)',live_n8n_import_tested:false,live_gmail_or_llm_called:false,source_phase_a_preserved:true};

@@ -43,6 +43,7 @@ SELECT jsonb_build_object('now',clock_timestamp(),'nonce',gen_random_uuid()::tex
  'token',replace(gen_random_uuid()::text || gen_random_uuid()::text,'-',''),
  'ticket',(SELECT to_jsonb(t) FROM target t),
  'revision',(SELECT updated_at::text FROM target),
+ 'init_failures',(SELECT count(*) FROM ticket_events WHERE ticket_id=(SELECT id FROM target) AND event='CBM_INIT_FAILURE'),
  'state',(SELECT payload FROM ticket_events WHERE ticket_id=(SELECT id FROM target)
           AND event='CBM_DISPATCH_STATE' ORDER BY id DESC LIMIT 1),
  'inbox',COALESCE((SELECT jsonb_agg(to_jsonb(e) ORDER BY e.id) FROM ticket_events e
@@ -104,7 +105,7 @@ SELECT jsonb_build_object('recorded',EXISTS(SELECT 1 FROM recorded),'ticket_id',
 
 // One recovery ticket per tick keeps one ticket per agent invocation and per memory scope.
 // Normal intake and response webhooks launch their own immediate executions.
-const DUE = `
+const DUE_INITIALIZED = `
 SELECT t.id AS ticket_id FROM tickets t JOIN LATERAL (
  SELECT payload FROM ticket_events WHERE ticket_id=t.id AND event='CBM_DISPATCH_STATE' ORDER BY id DESC LIMIT 1
 ) s ON TRUE
@@ -114,4 +115,73 @@ WHERE COALESCE((s.payload->>'halted')::boolean,FALSE)=FALSE AND (
            AND e.id>COALESCE((s.payload->>'response_cursor')::bigint,0)))
 ORDER BY (s.payload->>'next_wake')::timestamptz ASC NULLS LAST,t.id LIMIT 1;`;
 
-module.exports = {CREATE,LOAD,COMMIT,CHECK_OFFER,RECORD_RESPONSE,DUE};
+// Read-only native Postgres tool. Return operational facts, never tokens, message
+// bodies, configuration, arbitrary database rows, or a list of next tool calls.
+const PUBLIC_CONTEXT = `
+WITH loaded AS (${LOAD.trim().replace(/;$/, '')}), base AS (
+ SELECT context AS raw, context->'ticket' AS t, NULLIF(context->'state','null'::jsonb) AS s,
+ (context->>'now')::timestamptz AS instant FROM loaded
+), summary AS (
+ SELECT *,
+ COALESCE((t->>'severity')::int>=4,FALSE) AS urgent,
+ (SELECT count(*) FROM jsonb_array_elements(COALESCE(s->'offers','[]')) o WHERE o->>'status' IN ('SENDING','LIVE','UNCERTAIN')) AS active_count,
+ (SELECT count(*) FROM jsonb_array_elements(COALESCE(s->'offers','[]')) o WHERE o->>'status' IN ('SENDING','LIVE','UNCERTAIN') AND (o->>'expires_at')::timestamptz<=instant) AS expired_count,
+ (SELECT count(*) FROM jsonb_array_elements(raw->'inbox') e WHERE (e->>'id')::bigint>COALESCE((s->>'response_cursor')::bigint,0)) AS response_count,
+ COALESCE((s->>'halted')::boolean,FALSE) OR EXISTS (
+ SELECT 1 FROM jsonb_each(COALESCE(s->'messages','{}')) m WHERE m.value->>'status'='UNCERTAIN'
+ OR (m.value->>'status'='SENDING' AND (m.value->>'claimed_at')::timestamptz+interval '5 minutes'<instant)) AS needs_operator,
+ COALESCE((SELECT jsonb_agg(id ORDER BY ord) FROM jsonb_array_elements(COALESCE(s->'shortlist','[]')) WITH ORDINALITY AS ids(id,ord)
+ WHERE NOT EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(s->'offers','[]')) o WHERE o->'technician_id'=id)
+ AND EXISTS(SELECT 1 FROM jsonb_array_elements(raw->'candidates') c WHERE c->'technician_id'=id)),'[]') AS available,
+ EXISTS(SELECT 1 FROM jsonb_each(COALESCE(s->'messages','{}')) m WHERE m.value->>'status'='PENDING'
+ AND m.key NOT LIKE 'offer:%' AND (m.key<>'opening' OR t->>'status' IN ('LOCALIZED','DISPATCHING'))) AS pending_notices
+ FROM base
+), checked AS (
+ SELECT *, response_count>0 OR expired_count>0 OR pending_notices OR (
+ t->>'status' IN ('LOCALIZED','DISPATCHING') AND s#>>'{messages,opening,status}'='SENT' AND (
+ (active_count<CASE WHEN urgent THEN 2 ELSE 1 END AND jsonb_array_length(available)>0 AND (NOT urgent OR instant<(s->>'urgent_start')::timestamptz))
+ OR (active_count=0 AND (jsonb_array_length(available)=0 OR (urgent AND instant>=(s->>'urgent_start')::timestamptz))))) AS unfinished
+ FROM summary
+)
+SELECT jsonb_build_object(
+ 'ticket_id',t->'id','initialized',s IS NOT NULL,'status',t->>'status',
+ 'outcome',CASE WHEN t IS NULL OR t='null'::jsonb THEN 'NO_TICKET'
+ WHEN needs_operator OR (s IS NULL AND (raw->>'init_failures')::int>=3) THEN 'OPERATOR_ACTION_REQUIRED'
+ WHEN s IS NULL THEN 'UNINITIALIZED' WHEN unfinished THEN 'ACTION_REQUIRED'
+ WHEN t->>'status'='ASSIGNED' THEN 'ASSIGNED' WHEN t->>'status'='ESCALATED' THEN 'ESCALATED' ELSE 'WAITING' END,
+ 'now',instant,'urgent',urgent,'max_live_offers',CASE WHEN urgent THEN 2 ELSE 1 END,
+ 'active_offer_count',active_count,'expired_offer_count',expired_count,'pending_response_count',response_count,
+ 'urgent_start',s->'urgent_start','original_date',s->'original_date','opening_status',s#>>'{messages,opening,status}',
+ 'available_candidate_ids',available,'next_wake',s->'next_wake',
+ 'error',CASE WHEN needs_operator THEN COALESCE(s->>'error','Delivery receipt missing or uncertain. Operator reconciliation required.') ELSE NULL END,
+ 'offers',COALESCE((SELECT jsonb_agg(o-'token') FROM jsonb_array_elements(COALESCE(s->'offers','[]')) o),'[]'),
+ 'notices',COALESCE((SELECT jsonb_agg(jsonb_build_object('key',m.key,'status',m.value->>'status','message_id',m.value->'message_id')) FROM jsonb_each(COALESCE(s->'messages','{}')) m),'[]'),
+ 'candidates',COALESCE((SELECT jsonb_agg(jsonb_build_object('technician_id',id,'eligible',c IS NOT NULL,
+ 'full_name',c->'full_name','open_jobs',c->'open_jobs','last_assigned_at',c->'last_assigned_at','rating',c->'rating') ORDER BY ord)
+ FROM jsonb_array_elements(COALESCE(s->'shortlist','[]')) WITH ORDINALITY ids(id,ord)
+ LEFT JOIN LATERAL (SELECT value AS c FROM jsonb_array_elements(raw->'candidates') WHERE value->'technician_id'=id) found ON TRUE),'[]')
+) AS context FROM checked;`;
+
+const PUBLIC_RESULT = `SELECT context || jsonb_build_object('operation_result',$2::jsonb) AS context FROM (${PUBLIC_CONTEXT.trim().replace(/;$/, '')}) result;`;
+
+// A native create call can finish before dispatch initialization. Such tickets
+// remain recoverable, with bounded initialization failures recorded independently.
+const INIT_FAILURE = `
+WITH target AS (${LOAD.trim().replace(/;$/, '')}), logged AS (
+ INSERT INTO ticket_events(ticket_id,event,payload)
+ SELECT (context#>>'{ticket,id}')::int,'CBM_INIT_FAILURE','{"reason":"Agent ended before initialization"}'::jsonb
+ FROM target WHERE context->'ticket'<>'null'::jsonb AND context->'state'='null'::jsonb RETURNING id
+) SELECT count(*) AS recorded FROM logged;`;
+
+const DUE = `
+SELECT ticket_id FROM (
+ SELECT ticket_id,0 AS priority FROM (${DUE_INITIALIZED.trim().replace(/;$/, '')}) initialized
+ UNION ALL
+ SELECT t.id,1 FROM tickets t WHERE t.status='LOCALIZED'
+ AND EXISTS(SELECT 1 FROM ticket_events e WHERE e.ticket_id=t.id AND e.event='CBM_SOURCE')
+ AND NOT EXISTS(SELECT 1 FROM ticket_events e WHERE e.ticket_id=t.id AND e.event='CBM_DISPATCH_STATE')
+ AND (SELECT count(*) FROM ticket_events e WHERE e.ticket_id=t.id AND e.event='CBM_INIT_FAILURE')<3
+ AND COALESCE((SELECT max(created_at) FROM ticket_events e WHERE e.ticket_id=t.id AND e.event='CBM_INIT_FAILURE'),t.created_at)+interval '1 minute'<=clock_timestamp()
+) due ORDER BY priority,ticket_id LIMIT 1;`;
+
+module.exports = {CREATE,LOAD,COMMIT,CHECK_OFFER,RECORD_RESPONSE,DUE,PUBLIC_CONTEXT,PUBLIC_RESULT,INIT_FAILURE};

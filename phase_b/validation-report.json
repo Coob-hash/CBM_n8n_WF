@@ -1,8 +1,13 @@
 {
-  "passed": 20,
+  "passed": 25,
   "tests": [
     "Export preserves all 15 Phase A nodes, connections, WF2 and schema",
     "Idempotent creation, element deduplication, bound existing ticket",
+    "Native Postgres creation and saved initialization work with a bound source before an ID exists",
+    "Native context exposes facts without operation scripts, bearer tokens, bodies or config",
+    "Agent-supplied technician and notice inputs are used and rejected when invalid",
+    "Native read detects a lost receipt and the fixed failure workflow persists the halt",
+    "Tickets created before initialization have bounded recovery and failure auditing",
     "SQL filters eligibility and keeps five ranked candidates; messages escape report HTML",
     "Urgent two-offer cap and one atomic winner with withdrawal notices",
     "Ordinary offers remain sequential and have 48 hours before a future fixed appointment",
@@ -17,7 +22,7 @@
     "Zero candidates is a valid escalation, not a stalled empty-item branch",
     "WF2 terminal states and technician statistics are not overwritten on replay",
     "Recovery SQL locates due persisted work and skips halted tickets",
-    "Embedded tool graphs execute their actual Code/SQL/If branches with mocked Gmail",
+    "Saved workflows and nested receipt workflow execute Code/SQL/If paths with mocked Gmail",
     "Urgent business-day scheduling uses Rome DST and skips weekends",
     "Provider/model recovery is bounded at three failed invocations",
     "Generated n8n Code and expression syntax; valid node connections and tool boundaries"
