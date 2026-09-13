@@ -7,7 +7,8 @@ Maintenance ticket intake, technician dispatch and IFC services.
 | Path | Purpose |
 |---|---|
 | `wf1_ticket_intake_and_dispatch.json` | Current WF1 export with native Postgres tools and the dispatch agent |
-| `n8n_wf2_completion_approval_ifc_update.json` | Completion, facility-manager approval and IFC update workflow |
+| `n8n_wf2_completion_approval_ifc_update.json` | Current WF2 export: report-first completion, optional photograph, supervised closure |
+| `wf2/` | WF2 source, builder, validation and tests |
 | `phase_b/workflows/` | Seven saved helper workflows required by WF1 |
 | `phase_b/` | Dispatch source, builder, configuration and tests |
 | `database/` | Approved PostgreSQL schema, migration runner, transaction functions and database tests |
@@ -15,6 +16,7 @@ Maintenance ticket intake, technician dispatch and IFC services.
 | `ifc_service.py`, `capture_normalize.py` | IFC API and image normalization |
 | `calibrate_registration.py`, `create_sample_ifc.py` | Registration calibration and sample model utilities |
 | `schema.sql` | Legacy schema fixture used by the current workflow exports |
+| `schema_wf2_completion.sql` | Additive legacy migration required by WF2 |
 | `docs/WF1_Native_Tools_Guide.docx` | Current architecture and node-by-node explanation |
 
 ## Configure and import
@@ -33,9 +35,15 @@ From this directory, with Node.js available:
 node .\phase_b\build-workflow.js
 node .\phase_b\setup-test-runtime.js
 node .\phase_b\test-dispatch.js
+
+python .\wf2\build_wf2.py
+python .\wf2\validate_wf2.py
+node .\wf2\test_wf2_nodes.mjs
+node .\wf2\test_migration.mjs
 ```
 
-The first command regenerates template exports. Pass `phase_b/deployment.local.json` to the builder for locally configured exports; keep those private. Test setup downloads the isolated PGlite runtime on demand into an ignored cache.
+`setup-test-runtime.js` installs the PGlite engine that both `test-dispatch.js` and
+`wf2\test_migration.mjs` need; run it once before either. The first command regenerates template exports. Pass `phase_b/deployment.local.json` to the builder for locally configured exports; keep those private. Test setup downloads the isolated PGlite runtime on demand into an ignored cache.
 
 For the Python service, install its dependencies in a virtual environment:
 
@@ -51,6 +59,6 @@ Sample model creation is optional. `ifc_service.py` documents the IFC model dire
 
 ## Validation and versioning
 
-The 25 local dispatch tests pass. Live n8n, Gmail, model and Python service integration still require environment-specific checks. Existing WF2/schema compatibility limitations are listed in the dispatch guide.
+The 25 local dispatch tests pass, as do the 14 WF2 structure checks, 41 WF2 node checks and 31 migration checks. Live n8n, Gmail, model and Python service integration still require environment-specific checks. WF2 now has its own legacy migration, `schema_wf2_completion.sql`, which must be applied before importing it.
 
 Git history is preserved. Track source and template exports together; do not commit private deployment values. `phase_b/original_wf1.json` is a required builder and regression-test fixture, not an alternate workflow to import.

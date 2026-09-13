@@ -8,8 +8,14 @@ import { fileURLToPath } from 'node:url';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
 const { createRequire } = await import('node:module');
-const { PGlite } = createRequire(import.meta.url)(
-  path.join(ROOT, 'phase_b', '.test-runtime', 'pglite', 'dist', 'index.cjs'));
+const PGLITE = path.join(ROOT, 'phase_b', '.test-runtime', 'pglite', 'dist', 'index.cjs');
+if (!fs.existsSync(PGLITE)) {
+  console.error('The PGlite test engine is not installed in this clone.');
+  console.error('Run this once, then retry:');
+  console.error('    node phase_b/setup-test-runtime.js');
+  process.exit(1);
+}
+const { PGlite } = createRequire(import.meta.url)(PGLITE);
 
 let failed = 0;
 const check = (label, cond, detail) => {
