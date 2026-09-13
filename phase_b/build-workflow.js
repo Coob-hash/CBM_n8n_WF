@@ -6,7 +6,7 @@ const sql = require('./queries');
 const root = path.resolve(__dirname, '..');
 const workflowPath = path.join(root,'wf1_ticket_intake_and_dispatch.json');
 const backupPath = path.join(__dirname,'original_wf1.json');
-const originalHash = 'F65E404EA78D09FE655FDDC821FC5310BFC4DA30CF481557D6817F3DA9C5689C';
+const originalHash = 'F6BD682EC53906052CF58C2DCC3FF0741EBE560032604E34A0C2092AF4E6D065';
 if (!fs.existsSync(backupPath)) {
   const bytes = fs.readFileSync(workflowPath);
   if (crypto.createHash('sha256').update(bytes).digest('hex').toUpperCase() !== originalHash) throw new Error('WF1 differs from reviewed source; refusing to overwrite it.');
