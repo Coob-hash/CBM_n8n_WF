@@ -1,0 +1,961 @@
+{
+  "name": "CBM WF1 - Ticket Intake & Dispatch",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Phase A - Intake & Localization\nDrive upload simulates the mobile app. Filename convention: `report_<reporterEmail>_<freetext>.jpg`.\nReplace before running: **folder ID** (node 1), **MultiSet Basic-auth credential** (node 4), **mapCode** (node 5), **IFC service URL** (node 7).\nCamera intrinsics are derived from the image in node 3 - override the CONFIG block there with your phone's real fx/fy/px/py.",
+        "width": 520,
+        "height": 220,
+        "color": 4
+      },
+      "name": "Note -380x-260",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -380,
+        -260
+      ]
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "triggerOn": "specificFolder",
+        "folderToWatch": {
+          "__rl": true,
+          "value": "REPLACE_FOLDER_ID_01_INCOMING_SNAPSHOTS",
+          "mode": "id"
+        },
+        "event": "fileCreated",
+        "options": {}
+      },
+      "name": "Drive Trigger - New Snapshot",
+      "type": "n8n-nodes-base.googleDriveTrigger",
+      "typeVersion": 1,
+      "position": [
+        -380,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $json.id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "name": "Download Snapshot",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -160,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare Image & Metadata\n// Turns the Drive binary into exactly what the MultiSet VPS query needs: a\n// normalized JPEG and the camera intrinsics that belong to those exact pixels.\n//\n// The pixel work runs in ifc_service (POST /captures/normalize) because it needs\n// Pillow, a compiled library that cannot run inside an n8n Code node. That is the\n// same reason /elements/nearest already lives there.\n//\n// The service reads FocalLengthIn35mmFilm from the photograph's own EXIF, bakes the\n// EXIF orientation into the pixels, and downscales to MultiSet's 1280 px limit. This\n// replaces the previous fixed-HFOV estimate, which assumed every photograph came from\n// a ~26 mm-equivalent lens, ignored the orientation tag entirely, and sent the image\n// at full resolution.\n\n// ---- CONFIG --------------------------------------------------------------\nlet IFC_SERVICE_URL = 'http://localhost:8000';\ntry { if ($env.IFC_SERVICE_URL) IFC_SERVICE_URL = $env.IFC_SERVICE_URL; } catch (e) { /* env access blocked */ }\nIFC_SERVICE_URL = IFC_SERVICE_URL.replace(/\\/+$/, '');\n\nconst LONG_SIDE = 1280;   // MultiSet's documented limit on the longer side\nconst HFOV_DEG  = 69;     // legacy estimate, fallback path only - always untrusted\n// --------------------------------------------------------------------------\n\nconst trg = $('Drive Trigger - New Snapshot').first().json;\nconst fileName = trg.name || 'report_unknown_object.jpg';\nconst buf = await this.helpers.getBinaryDataBuffer(0, 'data');\n\n// Retained only for the fallback path below: when the service cannot be reached we\n// still need a plausible frame size to keep the item well-formed.\nfunction imageSize(b) {\n  // PNG\n  if (b.length > 24 && b.toString('ascii', 12, 16) === 'IHDR') {\n    return { width: b.readUInt32BE(16), height: b.readUInt32BE(20) };\n  }\n  // JPEG: walk the marker segments until the SOFn frame header\n  if (b[0] !== 0xFF || b[1] !== 0xD8) return null;\n  let i = 2;\n  while (i < b.length - 9) {\n    if (b[i] !== 0xFF) { i++; continue; }\n    const marker = b[i + 1];\n    if (marker === 0xFF) { i++; continue; }\n    if (marker === 0x01 || (marker >= 0xD0 && marker <= 0xD9)) { i += 2; continue; }\n    const len = b.readUInt16BE(i + 2);\n    const isSOF = marker >= 0xC0 && marker <= 0xCF &&\n                  marker !== 0xC4 && marker !== 0xC8 && marker !== 0xCC;\n    if (isSOF) return { height: b.readUInt16BE(i + 5), width: b.readUInt16BE(i + 7) };\n    i += 2 + len;\n  }\n  return null;\n}\n\n// PoC filename convention: report_<reporterEmail>_<freeText>.jpg\nconst parts = fileName.replace(/\\.[^.]+$/, '').split('_');\nconst reporterEmail = (parts[1] && parts[1].includes('@')) ? parts[1] : 'unknown@reporter';\n\nlet frame;\ntry {\n  const res = await this.helpers.httpRequest({\n    method: 'POST',\n    url: IFC_SERVICE_URL + '/captures/normalize',\n    body: { imageB64: buf.toString('base64'), longSide: LONG_SIDE },\n    json: true,\n    timeout: 60000,\n  });\n  const cam = res.camera;\n  frame = {\n    width: cam.width,\n    height: cam.height,\n    fx: cam.fx, fy: cam.fy, px: cam.px, py: cam.py,\n    imageB64: res.imageB64,\n    intrinsicsSource: cam.source,\n    // false when K failed the plausibility gate. The Confidence Gate routes such a\n    // capture to manual triage: a wrong K still yields a confident-looking pose.\n    intrinsicsTrusted: cam.trusted === true,\n    orientationApplied: res.image.orientation_applied,\n    sourceWidth: res.image.source_width,\n    sourceHeight: res.image.source_height,\n    lens: cam.lens || null,\n    gateRejections: res.gate_rejections || [],\n    normalizeError: null,\n  };\n} catch (err) {\n  // The service is unreachable, or it refused the photograph (HTTP 422: no usable\n  // EXIF). Keep the item well-formed so the report still reaches a human, but mark\n  // it untrusted so it is never grounded against the IFC model.\n  const detail = (err && err.response && err.response.body && err.response.body.detail)\n    || (err && err.message) || String(err);\n  const size = imageSize(buf) || { width: 960, height: 720 };\n  const fx = Number(((size.width / 2) / Math.tan((HFOV_DEG * Math.PI / 180) / 2)).toFixed(4));\n  frame = {\n    width: size.width,\n    height: size.height,\n    fx, fy: fx, px: size.width / 2, py: size.height / 2,\n    imageB64: buf.toString('base64'),\n    intrinsicsSource: 'HFOV_FALLBACK',\n    intrinsicsTrusted: false,\n    orientationApplied: null,\n    sourceWidth: size.width,\n    sourceHeight: size.height,\n    lens: null,\n    gateRejections: [],\n    normalizeError: detail,\n  };\n}\n\nreturn [{\n  json: {\n    fileName,\n    reporterEmail,\n    photoUrl: trg.webViewLink || '',\n    ...frame,\n    // -> Vision LLM later on. Carries the normalized frame, so the vision step sees\n    // the same upright pixels MultiSet was asked about.\n    dataUri: 'data:image/jpeg;base64,' + frame.imageB64,\n  },\n  binary: $input.first().binary,\n}];"
+      },
+      "name": "Prepare Image & Metadata",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.multiset.ai/v1/m2m/token",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "name": "MultiSet - Get Token",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        280,
+        0
+      ],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "REPLACE_CRED_ID",
+          "name": "MultiSet M2M (clientId / clientSecret)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.multiset.ai/v1/vps/map/query",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ mapCode: 'REPLACE_WITH_MULTISET_MAP_CODE', isRightHanded: false, width: $('Prepare Image & Metadata').first().json.width, height: $('Prepare Image & Metadata').first().json.height, fx: $('Prepare Image & Metadata').first().json.fx, fy: $('Prepare Image & Metadata').first().json.fy, px: $('Prepare Image & Metadata').first().json.px, py: $('Prepare Image & Metadata').first().json.py, queryImage: $('Prepare Image & Metadata').first().json.imageB64 }) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "name": "MultiSet - Localize Snapshot",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        500,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.poseFound }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "leftValue": "={{ $json.confidence }}",
+              "rightValue": 0.3,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            },
+            {
+              "leftValue": "={{ $('Prepare Image & Metadata').first().json.intrinsicsTrusted }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        }
+      },
+      "name": "Confidence Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=INSERT INTO tickets (status, reporter_email, photo_before_url, vps_confidence)\nVALUES ('NEEDS_TRIAGE', '{{ $('Prepare Image & Metadata').first().json.reporterEmail }}', '{{ $('Prepare Image & Metadata').first().json.photoUrl }}', {{ $json.confidence || 0 }})\nRETURNING id;",
+        "options": {}
+      },
+      "name": "Create Triage Ticket",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        940,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "REPLACE_FM_EMAIL@example.com",
+        "subject": "=[CBM] Ticket #{{ $json.id }} needs manual localization",
+        "emailType": "html",
+        "message": "=<p>A new fault report could not be localized automatically (low VPS confidence).</p><p>Photo: <a href=\"{{ $('Prepare Image & Metadata').first().json.photoUrl }}\">open</a><br/>Reporter: {{ $('Prepare Image & Metadata').first().json.reporterEmail }}</p><p>Please localize the object manually and re-dispatch. Ticket status: NEEDS_TRIAGE.</p>",
+        "options": {}
+      },
+      "name": "Notify FM - Manual Triage Needed",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1160,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:8000/elements/nearest",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ x: $json.position.x, y: $json.position.y, z: $json.position.z, max_distance: 3.0 }) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "name": "Find IFC Element",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        940,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=SELECT id FROM tickets WHERE ifc_global_id = '{{ $json.global_id }}' AND status NOT IN ('CLOSED','DUPLICATE') LIMIT 1;",
+        "options": {}
+      },
+      "name": "Check Duplicate",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        1160,
+        -160
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.id ? String($json.id) : '' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ]
+        }
+      },
+      "name": "Is Duplicate?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1380,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=INSERT INTO tickets (status, reporter_email, photo_before_url, ifc_global_id, ifc_class, description)\nVALUES ('DUPLICATE', '{{ $('Prepare Image & Metadata').first().json.reporterEmail }}', '{{ $('Prepare Image & Metadata').first().json.photoUrl }}', '{{ $('Find IFC Element').first().json.global_id }}', '{{ $('Find IFC Element').first().json.ifc_class }}', 'Duplicate of open ticket #{{ $json.id }}') RETURNING id;",
+        "options": {}
+      },
+      "name": "Log Duplicate Report",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        1600,
+        -40
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 500, messages: [{ role: 'user', content: [ { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: $('Prepare Image & Metadata').first().json.imageB64 } }, { type: 'text', text: 'This photo shows a broken/faulty object inside a building (element type from BIM: ' + $('Find IFC Element').first().json.ifc_class + ', name: ' + $('Find IFC Element').first().json.name + '). Classify the fault. Respond ONLY with minified JSON, no markdown: {\\\"category\\\": string, \\\"severity\\\": integer 1-5, \\\"description\\\": short string, \\\"required_skill\\\": one of carpentry|plumbing|electrical|hvac|general}' } ] }] }) }}",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "REPLACE_WITH_ANTHROPIC_API_KEY_or_use_n8n_credential"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        }
+      },
+      "name": "Vision Triage (Claude)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1600,
+        -280
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = ($json.content && $json.content[0] && $json.content[0].text) || '{}';\nlet triage;\ntry { triage = JSON.parse(raw.replace(/```json|```/g, '').trim()); }\ncatch (e) { triage = { category: 'unknown', severity: 3, description: raw.slice(0, 180), required_skill: 'general' }; }\nconst loc  = $('MultiSet - Localize Snapshot').first().json;\nconst el   = $('Find IFC Element').first().json;\nconst meta = $('Prepare Image & Metadata').first().json;\nreturn [{ json: {\n  ...triage,\n  position: loc.position, confidence: loc.confidence,\n  mapCode: (loc.mapCodes || [])[0] || 'REPLACE_WITH_MULTISET_MAP_CODE',\n  element: el, reporterEmail: meta.reporterEmail, photoUrl: meta.photoUrl\n} }];"
+      },
+      "name": "Parse Triage JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1820,
+        -280
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=INSERT INTO tickets (status, reporter_email, photo_before_url, map_code, pos_x, pos_y, pos_z, vps_confidence, ifc_global_id, ifc_class, ifc_name, ifc_storey, category, severity, description, required_skill)\nVALUES ('LOCALIZED', '{{ $json.reporterEmail }}', '{{ $json.photoUrl }}', '{{ $json.mapCode }}', {{ $json.position.x }}, {{ $json.position.y }}, {{ $json.position.z }}, {{ $json.confidence }}, '{{ $json.element.global_id }}', '{{ $json.element.ifc_class }}', '{{ ($json.element.name || '').replace(/'/g, \"''\") }}', '{{ $json.element.storey || '' }}', '{{ $json.category }}', {{ $json.severity || 3 }}, '{{ ($json.description || '').replace(/'/g, \"''\") }}', '{{ $json.required_skill }}')\nRETURNING id;",
+        "options": {}
+      },
+      "name": "Create Ticket",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        2040,
+        -280
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "REPLACE_FM_EMAIL@example.com",
+        "subject": "=[CBM] New ticket #{{ $json.id }}: {{ $('Parse Triage JSON').first().json.category }} ({{ $('Parse Triage JSON').first().json.element.name }})",
+        "emailType": "html",
+        "message": "=<h3>New maintenance ticket #{{ $json.id }}</h3><p><b>Element:</b> {{ $('Parse Triage JSON').first().json.element.name }} ({{ $('Parse Triage JSON').first().json.element.ifc_class }}, GlobalId {{ $('Parse Triage JSON').first().json.element.global_id }})<br/><b>Issue:</b> {{ $('Parse Triage JSON').first().json.description }}<br/><b>Severity:</b> {{ $('Parse Triage JSON').first().json.severity }}/5 · <b>VPS confidence:</b> {{ $('Parse Triage JSON').first().json.confidence }}<br/><b>Photo:</b> <a href=\"{{ $('Parse Triage JSON').first().json.photoUrl }}\">open</a></p><p>The system is now contacting technicians autonomously. You will be notified on assignment.</p>",
+        "options": {}
+      },
+      "name": "Notify FM - Ticket Opened",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2260,
+        -440
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Phase B — Deterministic Dispatch (SQL)\nEligibility = hard SQL filters (skill, zone, active). Ranking = load balance → fairness (`last_assigned_at ASC NULLS FIRST`: never-assigned technicians go FIRST, fixing the cold-start problem) → rating.\nThe loop contacts ONE technician at a time (Constraint 1). Offer email has only Accept/Deny links with a FIXED slot (Constraint 2).",
+        "width": 560,
+        "height": 190,
+        "color": 4
+      },
+      "name": "Note 2260x-120",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2260,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=SELECT t.id AS technician_id, t.full_name, t.email, t.rating, COALESCE(o.open_jobs, 0) AS open_jobs, t.last_assigned_at FROM technicians t LEFT JOIN (SELECT technician_id, count(*) AS open_jobs FROM tickets WHERE status IN ('ASSIGNED','WORK_DONE','PENDING_APPROVAL','REWORK') GROUP BY technician_id) o ON o.technician_id = t.id WHERE t.active = TRUE AND '{{ $('Parse Triage JSON').first().json.required_skill }}' = ANY(t.skills) AND t.zone = 'building-A' ORDER BY COALESCE(o.open_jobs, 0) ASC, t.last_assigned_at ASC NULLS FIRST, t.rating DESC LIMIT 5;",
+        "options": {}
+      },
+      "name": "Rank Candidates (SQL)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        2480,
+        -280
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ !!$json.email }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        }
+      },
+      "name": "Candidates Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2620,
+        -280
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=UPDATE tickets SET status='DISPATCHING', updated_at=now() WHERE id={{ $('Create Ticket').first().json.id }} RETURNING id;",
+        "options": {}
+      },
+      "name": "Mark Dispatching",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        2760,
+        -280
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $('Rank Candidates (SQL)').all().map(i => i.json).filter(r => r.email);\nconst ticketId = $('Create Ticket').first().json.id;\nconst trg = $('Parse Triage JSON').first().json;\n// Deterministic scheduling: severity >= 4 -> next business day 08:00-10:00,\n// otherwise +2 business days 14:00-16:00. (Constraint 2: fixed slot, no negotiation.)\nfunction addBusinessDays(from, n) {\n  const d = new Date(from); let added = 0;\n  while (added < n) { d.setDate(d.getDate() + 1);\n    if (d.getDay() !== 0 && d.getDay() !== 6) added++; }\n  return d.toISOString().slice(0, 10);\n}\nconst urgent = (trg.severity || 3) >= 4;\nconst proposedDate = addBusinessDays(new Date(), urgent ? 1 : 2);\nconst proposedSlot = urgent ? '08:00-10:00' : '14:00-16:00';\nreturn rows.map((c, i) => ({ json: {\n  technician_id: c.technician_id, full_name: c.full_name, email: c.email,\n  rank: i + 1,\n  reason: `open_jobs=${c.open_jobs}, last_assigned=${c.last_assigned_at || 'never'}, rating=${c.rating}`,\n  ticketId, proposedDate, proposedSlot,\n  elementName: trg.element.name, ifcClass: trg.element.ifc_class,\n  description: trg.description, severity: trg.severity, photoUrl: trg.photoUrl\n} }));"
+      },
+      "name": "Split Candidates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2980,
+        -280
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {
+          "reset": false
+        }
+      },
+      "name": "Offer Loop (one at a time)",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        3200,
+        -280
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.email }}",
+        "subject": "=[CBM] Job offer - ticket #{{ $json.ticketId }}: {{ $json.description }}",
+        "emailType": "html",
+        "message": "=<h3>Maintenance job offer</h3><p>Hello {{ $json.full_name }},</p><p><b>Object:</b> {{ $json.elementName }} ({{ $json.ifcClass }})<br/><b>Issue:</b> {{ $json.description }} (severity {{ $json.severity }}/5)<br/><b>Photo:</b> <a href=\"{{ $json.photoUrl }}\">open</a><br/><b>Date:</b> {{ $json.proposedDate }} · <b>Slot:</b> {{ $json.proposedSlot }} <i>(fixed - cannot be changed)</i></p><p><a href=\"{{ $execution.resumeUrl }}?decision=accept\">&#9989; ACCEPT the job</a> &nbsp;|&nbsp; <a href=\"{{ $execution.resumeUrl }}?decision=deny\">&#10060; DENY</a></p><p>If you do not respond within 4 hours the offer expires automatically.</p>",
+        "options": {}
+      },
+      "name": "Send Offer to Technician",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        3420,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "resume": "webhook",
+        "httpMethod": "GET",
+        "limitWaitTime": true,
+        "limitType": "afterTimeInterval",
+        "resumeAmount": 4,
+        "resumeUnit": "hours",
+        "options": {}
+      },
+      "name": "Wait for Decision",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3640,
+        -160
+      ],
+      "webhookId": "6f1c2b7e-1a11-4c1e-9a01-3e5d7f92ab41"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.query ? $json.query.decision : 'timeout' }}",
+              "rightValue": "accept",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        }
+      },
+      "name": "Accepted?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3860,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=WITH t AS (UPDATE tickets SET status='ASSIGNED', technician_id={{ $('Offer Loop (one at a time)').last().json.technician_id }}, scheduled_date='{{ $('Offer Loop (one at a time)').last().json.proposedDate }}', scheduled_slot='{{ $('Offer Loop (one at a time)').last().json.proposedSlot }}', updated_at=now() WHERE id={{ $('Create Ticket').first().json.id }} RETURNING id, technician_id) UPDATE technicians SET last_assigned_at=now() WHERE id=(SELECT technician_id FROM t) RETURNING id;",
+        "options": {}
+      },
+      "name": "Assign Ticket",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        4080,
+        -280
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Offer Loop (one at a time)').last().json.email }}",
+        "subject": "=[CBM] Confirmed - ticket #{{ $('Create Ticket').first().json.id }}",
+        "emailType": "html",
+        "message": "=<p>Thank you! The job is yours.</p><p><b>Date:</b> {{ $('Offer Loop (one at a time)').last().json.proposedDate }} · <b>Slot:</b> {{ $('Offer Loop (one at a time)').last().json.proposedSlot }}</p><p>When finished, photograph the repaired object and upload it to the shared Drive folder <b>02_completed_snapshots</b> naming the file <b>TICKET-{{ $('Create Ticket').first().json.id }}_after.jpg</b>.</p>",
+        "options": {}
+      },
+      "name": "Confirm to Technician",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        4300,
+        -280
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "REPLACE_FM_EMAIL@example.com",
+        "subject": "=[CBM] Ticket #{{ $('Create Ticket').first().json.id }} assigned",
+        "emailType": "html",
+        "message": "=<p>Ticket #{{ $('Create Ticket').first().json.id }} was accepted by <b>{{ $('Offer Loop (one at a time)').last().json.full_name }}</b> for {{ $('Offer Loop (one at a time)').last().json.proposedDate }} ({{ $('Offer Loop (one at a time)').last().json.proposedSlot }}).</p><p>No other technician has been or will be contacted for this ticket.</p>",
+        "options": {}
+      },
+      "name": "Notify FM - Assigned",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        4520,
+        -280
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=INSERT INTO ticket_events (ticket_id, event, payload) VALUES ({{ $('Create Ticket').first().json.id }}, 'OFFER_DECLINED_OR_TIMEOUT', '{\"technician_id\": {{ $('Offer Loop (one at a time)').last().json.technician_id }}, \"rank\": {{ $('Offer Loop (one at a time)').last().json.rank }}}') RETURNING id;",
+        "options": {}
+      },
+      "name": "Log Decline",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        3860,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=UPDATE tickets SET status='ESCALATED', updated_at=now() WHERE id={{ $('Create Ticket').first().json.id }} RETURNING id;",
+        "options": {}
+      },
+      "name": "Mark Escalated",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        3420,
+        -420
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "REPLACE_FM_EMAIL@example.com",
+        "subject": "=[CBM] Ticket #{{ $('Create Ticket').first().json.id }} ESCALATED - no technician accepted",
+        "emailType": "html",
+        "message": "=<p>All ranked technicians declined or did not respond within the timeout.</p><p>Please handle ticket #{{ $('Create Ticket').first().json.id }} manually (add candidates or dispatch externally).</p>",
+        "options": {}
+      },
+      "name": "Notify FM - Escalation",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        3640,
+        -420
+      ]
+    }
+  ],
+  "connections": {
+    "Drive Trigger - New Snapshot": {
+      "main": [
+        [
+          {
+            "node": "Download Snapshot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Snapshot": {
+      "main": [
+        [
+          {
+            "node": "Prepare Image & Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Image & Metadata": {
+      "main": [
+        [
+          {
+            "node": "MultiSet - Get Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MultiSet - Get Token": {
+      "main": [
+        [
+          {
+            "node": "MultiSet - Localize Snapshot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MultiSet - Localize Snapshot": {
+      "main": [
+        [
+          {
+            "node": "Confidence Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confidence Gate": {
+      "main": [
+        [
+          {
+            "node": "Find IFC Element",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Triage Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Triage Ticket": {
+      "main": [
+        [
+          {
+            "node": "Notify FM - Manual Triage Needed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find IFC Element": {
+      "main": [
+        [
+          {
+            "node": "Check Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Duplicate": {
+      "main": [
+        [
+          {
+            "node": "Is Duplicate?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Duplicate?": {
+      "main": [
+        [
+          {
+            "node": "Log Duplicate Report",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Vision Triage (Claude)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vision Triage (Claude)": {
+      "main": [
+        [
+          {
+            "node": "Parse Triage JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Triage JSON": {
+      "main": [
+        [
+          {
+            "node": "Create Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Ticket": {
+      "main": [
+        [
+          {
+            "node": "Notify FM - Ticket Opened",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Rank Candidates (SQL)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rank Candidates (SQL)": {
+      "main": [
+        [
+          {
+            "node": "Candidates Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Candidates Found?": {
+      "main": [
+        [
+          {
+            "node": "Mark Dispatching",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark Escalated",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Dispatching": {
+      "main": [
+        [
+          {
+            "node": "Split Candidates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Candidates": {
+      "main": [
+        [
+          {
+            "node": "Offer Loop (one at a time)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Offer Loop (one at a time)": {
+      "main": [
+        [
+          {
+            "node": "Mark Escalated",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Offer to Technician",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Escalated": {
+      "main": [
+        [
+          {
+            "node": "Notify FM - Escalation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Offer to Technician": {
+      "main": [
+        [
+          {
+            "node": "Wait for Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for Decision": {
+      "main": [
+        [
+          {
+            "node": "Accepted?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Accepted?": {
+      "main": [
+        [
+          {
+            "node": "Assign Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Decline",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assign Ticket": {
+      "main": [
+        [
+          {
+            "node": "Confirm to Technician",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confirm to Technician": {
+      "main": [
+        [
+          {
+            "node": "Notify FM - Assigned",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Decline": {
+      "main": [
+        [
+          {
+            "node": "Offer Loop (one at a time)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

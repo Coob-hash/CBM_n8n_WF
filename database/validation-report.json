@@ -1,0 +1,64 @@
+{
+  "passed": 40,
+  "tests": [
+    "All 27 approved tables exist",
+    "Singleton site and human-only FM and technicians",
+    "Skill and rating ranges, normalized email uniqueness",
+    "Coordinates and registration matrices reject malformed evidence",
+    "Report idempotency and one open case per asset",
+    "Ticket evidence must belong to that ticket, with an initial report",
+    "Failed AI verdict cannot masquerade as a successful repair",
+    "Initialization is idempotent and freezes five ranked candidates",
+    "Opening requires a real send attempt and acknowledgement",
+    "Ordinary offers have one slot and 48 elapsed hours",
+    "Urgent offers share a fixed appointment and cannot exceed two",
+    "Candidate order and offer appointment cannot be changed",
+    "Forged token rejected, repeat decision returns its original receipt",
+    "First persisted acceptance wins, second offer withdrawn atomically",
+    "Later acceptance cannot bypass an earlier unprocessed response",
+    "Decline releases capacity and eligibility is checked again on acceptance",
+    "Missing Gmail receipt halts dispatch and blocks blind retries",
+    "Completion ownership and assessed evidence remain immutable",
+    "AI cannot approve or close a ticket without the FM",
+    "FM approval overrides an advisory negative AI verdict and queues one IFC job",
+    "Rework keeps the rejected review and creates a new completion cycle",
+    "Changing FM supersedes pending requests",
+    "IFC synchronization publishes a successor without duplicate jobs or receipts",
+    "Uncertain IFC writes block a second model writer",
+    "Audit is append-only and automatic history omits secrets and message bodies",
+    "Agent context omits secret digests, body and operational scripts",
+    "Rome business dates skip weekends and preserve local appointment hours",
+    "An expired offer cannot accept even before the recovery worker runs",
+    "A timely persisted acceptance survives delayed processing after its deadline",
+    "Approval timeout is distinct from rejection and preserves pending ticket",
+    "Five-minute lost-receipt watchdog persists an uncertain delivery halt",
+    "Confirmed unsent notice can be retried only after FM reconciliation and resume",
+    "Acknowledged messages cannot be reset for duplicate delivery",
+    "Three execution failures halt an initialized dispatch",
+    "Exhausted shortlist escalates but available candidates block premature escalation",
+    "Offer and response foreign keys cannot cross dispatch boundaries",
+    "Failed migration transaction leaves no partial application schema",
+    "Direct early expiry and forged processed responses cannot skip dispatch policy",
+    "Urgent scheduling cannot be postponed in a direct dispatch insert",
+    "New schema coexists with legacy public tables without changing them"
+  ],
+  "domain_tables": 27,
+  "sql_runtime": "PGlite 0.5.8",
+  "live_postgres_server_tested": false,
+  "parallel_server_sessions_tested": false,
+  "live_n8n_or_providers_called": false,
+  "migrations": [
+    {
+      "file": "001_tables.sql",
+      "sha256": "010ffe15c489d2781c62f6904557293b049e503dff953b4e9d53518e0330b91d"
+    },
+    {
+      "file": "002_integrity.sql",
+      "sha256": "359244da0d3abe458999368b4964dba5bb7a5815dd8644814ec6b908312327e6"
+    },
+    {
+      "file": "003_operations.sql",
+      "sha256": "b6b8a5730401d19733290e7b7a39a766c0e11ad16a1561eea0dafa54165b8fc4"
+    }
+  ]
+}

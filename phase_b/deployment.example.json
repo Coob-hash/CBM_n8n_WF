@@ -1,0 +1,20 @@
+{
+  "fmEmail": "REPLACE_FM_EMAIL@example.com",
+  "callbackBase": "https://REPLACE_N8N_HOST/webhook",
+  "model": "claude-sonnet-4-6",
+  "postgresCredentialId": "REPLACE_POSTGRES_CREDENTIAL_ID",
+  "postgresCredentialName": "CBM Postgres",
+  "gmailCredentialId": "REPLACE_GMAIL_CREDENTIAL_ID",
+  "gmailCredentialName": "CBM Gmail",
+  "anthropicCredentialId": "REPLACE_ANTHROPIC_CREDENTIAL_ID",
+  "anthropicCredentialName": "CBM Anthropic",
+  "workflowIds": {
+    "initialize": "d7bdaa41c660ddf514f47ca5732b05aa",
+    "offer_next": "8555b0e787152959ac42a92dc914182e",
+    "send_notices": "70f0d086a0627d430b5fa7ce5e262e05",
+    "process_events": "4572050930582ffecf96401f5d45633a",
+    "escalate": "7d48cc5ab0079a31980bf74bec758ec3",
+    "ack": "4361d78a5a6d12aa633dd66017a3f4db",
+    "failure": "b6faa41765004111126a29d6fdccb21a"
+  }
+}
