@@ -1,6 +1,7 @@
 # Keep code and documentation consistent across platforms.
 *.py text eol=lf
 *.js text eol=lf
+*.mjs text eol=lf
 *.md text eol=lf
 *.txt text eol=lf
 *.mermaid text eol=lf

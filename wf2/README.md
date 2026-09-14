@@ -91,12 +91,16 @@ result.
 | `test_migration.mjs` | Applies `schema.sql` + `schema_wf2_completion.sql` to PGlite and exercises every statement WF2 and the tools run |
 
 ```powershell
+node phase_b\setup-test-runtime.js   # once: installs the PGlite engine the SQL tests need
 python wf2\build_wf2.py
 python wf2\validate_wf2.py
 node wf2\test_wf2_nodes.mjs
 node wf2\test_migration.mjs
-node phase_b\test-dispatch.js     # WF2 is hash-pinned there; the build re-pins it
+node phase_b\test-dispatch.js        # WF2 is hash-pinned there; the build re-pins it
 ```
+
+`test_migration.mjs` and `test-dispatch.js` both run against PGlite, which lives in the
+Git-ignored `phase_b/.test-runtime/`. Run `setup-test-runtime.js` once per clone.
 
 ## Before importing
 
