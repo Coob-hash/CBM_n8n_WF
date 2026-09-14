@@ -1,0 +1,23 @@
+{
+  "approved": false,
+  "document_dir": "documents",
+  "products": [{
+    "id": "radiator-product-1",
+    "manufacturer": "REPLACE_ACTUAL_MANUFACTURER",
+    "model": "REPLACE_ACTUAL_MODEL",
+    "documents": [{
+      "id": "manufacturer-datasheet",
+      "title": "Radiator technical datasheet",
+      "revision": "REPLACE_DOCUMENT_REVISION",
+      "path": "radiator-datasheet.pdf",
+      "approved": false
+    }]
+  }],
+  "assets": [{
+    "global_id": "REPLACE_IFC_GLOBAL_ID",
+    "ifc_class": "IfcSpaceHeater",
+    "ifc_type_global_id": null,
+    "product_id": "radiator-product-1",
+    "properties": []
+  }]
+}

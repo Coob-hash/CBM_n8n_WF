@@ -23,6 +23,8 @@ for (const n of original.nodes.slice(0,15)) {
 }
 const deploymentPath = process.argv[2] ? path.resolve(process.argv[2]) : path.join(__dirname,'deployment.example.json');
 const config = JSON.parse(fs.readFileSync(deploymentPath,'utf8'));
+// Preserve old private deployment files; merge new credential placeholders without rewriting them.
+config.knowledge={...JSON.parse(fs.readFileSync(path.join(__dirname,'deployment.example.json'),'utf8')).knowledge,...config.knowledge};
 const systemMessage = fs.readFileSync(path.join(__dirname,'system-message.txt'),'utf8');
 const id = name => crypto.createHash('sha256').update(`cbm-phase-b:${name}`).digest('hex').slice(0,32);
 const pgCred = {postgres:{id:config.postgresCredentialId,name:config.postgresCredentialName}};
@@ -36,7 +38,8 @@ function connect(connections,from,to,output=0,type='main') {
   while(connections[from][type].length<=output) connections[from][type].push([]);
   connections[from][type][output].push({node:to,type,index:0});
 }
-const saved = require('./saved-workflows').buildSavedWorkflows({config,node,code,pg,condition,connect,id});
+const knowledge = require('../knowledge/nodes').knowledgeNodes({config,node,code,pg,condition,connect,id});
+const saved = require('./saved-workflows').buildSavedWorkflows({config,node,code,pg,condition,connect,id,knowledge});
 const execute=saved.execute;
 const w = structuredClone(original);
 const preserved = new Set(original.nodes.slice(0,15).map(n=>n.name));
@@ -55,7 +58,11 @@ add(execute('Record Incomplete Execution','failure',3440,-60));
 add(condition('Operator Alert Needed?','={{ ["OPERATOR_ACTION_REQUIRED","NO_TICKET","UNINITIALIZED"].includes($json.context.outcome) }}',3660,-60));
 add(node('Notify FM - Dispatch Error','n8n-nodes-base.gmail',{resource:'message',operation:'send',sendTo:config.fmEmail,subject:'={{ "[CBM] Dispatch requires attention - ticket " + ($json.context?.ticket_id || "not yet initialized") }}',emailType:'text',message:'={{ "Automatic dispatch needs operator attention. Inspect the failed WF1 execution and its tool receipts before retrying any email. " + JSON.stringify($json) }}',options:{appendAttribution:false}},3880,100,2.1,{credentials:gmailCred,onError:'continueRegularOutput',retryOnFail:false}));
 add(node('Phase B Needs Attention','n8n-nodes-base.stopAndError',{errorType:'errorMessage',errorMessage:'={{ "Phase B incomplete: " + JSON.stringify($("Record Incomplete Execution").first().json) + ". Persisted dispatches retry up to three times; uninitialized tickets and uncertain Gmail delivery require operator action." }}'},4100,-60,1));
-connect(c,'Create Ticket','Phase B Context');connect(c,'Phase B Context','Read Dispatch Memory');connect(c,'Read Dispatch Memory','Dispatch Agent');
+add(pg('Read Knowledge Identity',require('../knowledge/nodes').IDENTITY,'={{ [JSON.stringify($("Phase B Context").first().json),JSON.stringify($json.context)] }}',2580,-400));
+add(knowledge.tool);add(knowledge.embedding);
+connect(c,'OpenAI Embeddings - Retrieval','Radiator Technical Knowledge',0,'ai_embedding');
+connect(c,'Radiator Technical Knowledge','Dispatch Agent',0,'ai_tool');
+connect(c,'Create Ticket','Phase B Context');connect(c,'Phase B Context','Read Dispatch Memory');connect(c,'Read Dispatch Memory','Read Knowledge Identity');connect(c,'Read Knowledge Identity','Dispatch Agent');
 connect(c,'Dispatch Claude Model','Dispatch Agent',0,'ai_languageModel');connect(c,'Dispatch Agent','Verify Committed Outcome');connect(c,'Verify Committed Outcome','Dispatch Settled?');
 connect(c,'Dispatch Settled?','Record Incomplete Execution',1);connect(c,'Record Incomplete Execution','Operator Alert Needed?');
 connect(c,'Operator Alert Needed?','Notify FM - Dispatch Error');connect(c,'Operator Alert Needed?','Phase B Needs Attention',1);connect(c,'Notify FM - Dispatch Error','Phase B Needs Attention');
@@ -103,15 +110,17 @@ const formNode=w.nodes.find(n=>n.name==='Build Confirmation Form');
 const action=new URL(config.callbackBase.replace(/\/$/,'')+'/cbm-wf1-offer').href;
 formNode.parameters.jsCode=formNode.parameters.jsCode.replace('<form method="post">','<form method="post" action="'+action+'">');
 fs.writeFileSync(workflowPath,JSON.stringify(w,null,2)+'\n');
+fs.writeFileSync(path.join(root,'knowledge','sync_workflow.json'),JSON.stringify(knowledge.workflow,null,2)+'\n');
 const helpersPath=path.join(__dirname,'workflows');
 fs.mkdirSync(helpersPath,{recursive:true});
 for(const [operation,workflow] of Object.keys(saved.definitions).map((op,i)=>[op,saved.workflows[i]]))
   fs.writeFileSync(path.join(helpersPath,operation+'.json'),JSON.stringify(workflow,null,2)+'\n');
 fs.writeFileSync(path.join(__dirname,'workflow-manifest.json'),JSON.stringify({
   main:'../wf1_ticket_intake_and_dispatch.json',
+  knowledgeSync:'../knowledge/sync_workflow.json',
   workflowIds:saved.workflowIds,
   helpers:Object.entries(saved.definitions).map(([operation,[name]])=>({operation,name,id:saved.workflowIds[operation],file:'workflows/'+operation+'.json'})),
   production:'Import helpers first; verify or rebind IDs and publish them. Then import/review/publish WF1.'
 },null,2)+'\n');
-console.log(`Updated WF1: ${preserved.size} Phase A nodes preserved; 2 native Postgres tools and 5 saved-workflow tools. Generated ${saved.workflows.length} helper workflows.`);
+console.log(`Updated WF1: ${preserved.size} Phase A nodes preserved; native Supabase knowledge tool, 2 Postgres tools and 5 saved-workflow tools. Generated ${saved.workflows.length} helpers and the knowledge sync workflow.`);
 module.exports={workflow:w,helpers:saved.workflows};

@@ -5,6 +5,8 @@
 !.env.template
 deployment.local.json
 database/site.local.json
+knowledge/catalog.local.json
+knowledge/documents/
 **/credentials.json
 **/credentials.local.json
 **/token.json

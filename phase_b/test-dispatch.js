@@ -61,6 +61,9 @@ async function embeddedTool(name,request,failMail=false,conflictOnce=false,provi
   const params=(n,dollar,input)=>evaluate(n.parameters.options.queryReplacement,dollar,input);
   async function postgres(n,values){
     const query=n.parameters.query;
+    // Supabase is a separate connection. Policy regression tests simulate no knowledge;
+    // knowledge/test_knowledge.js exercises the real vector SQL independently.
+    if(query===require('../knowledge/nodes').OFFER)return [{knowledge:{status:'UNAVAILABLE',chunks:[]}}];
     if(query===sql.CREATE)return db.transaction(async tx=>{await tx.exec('LOCK TABLE tickets IN SHARE ROW EXCLUSIVE MODE');return (await tx.query(query.slice(query.indexOf(';')+1),values)).rows;});
     if(query===sql.COMMIT&&conflicting){conflicting=false;return [{applied:false}];}
     return (await db.query(query,values)).rows;

@@ -72,6 +72,14 @@ function details(c) {
   const t=c.ticket,e=escapeHtml;return `<p><b>Element:</b> ${e(t.ifc_name)} (${e(t.ifc_class)})<br><b>Issue:</b> ${e(t.description)}<br><b>Severity:</b> ${e(t.severity)}/5</p>`+
     (/^https:\/\//i.test(t.photo_before_url||'')?`<p><a href="${e(t.photo_before_url)}">Before photo</a></p>`:'');
 }
+function technicalDetails(snapshot) {
+  if(snapshot.status!=='VERIFIED'||!snapshot.chunks?.length)return '<h4>Technical information</h4><p>No verified technical excerpt is available for this invitation. Confirm the installed product and its documentation before work.</p>';
+  return '<h4>Technical information — source excerpts</h4>'+snapshot.chunks.map(d=>{
+    const m=d.metadata,e=escapeHtml;
+    const link=/^https:\/\//i.test(m.source_url||'')?` — <a href="${e(m.source_url)}">Document</a>`:'';
+    return `<blockquote style="white-space:pre-wrap">${e(d.content)}</blockquote><p><small>Source: ${e(m.source_title)}; revision ${e(m.source_revision)}; page ${e(m.page)}${link}</small></p>`;
+  }).join('');
+}
 function initialize(request,row) {
   const c=context(request,row);if(!c.ticket||c.state)return finish(c);
   if(terminal(c.ticket))return reject(c,'TICKET_ALREADY_TERMINAL');
@@ -91,14 +99,22 @@ function offer(request,row) {
   if(!f.available_candidate_ids.length)return reject(c,'NO_ELIGIBLE_CANDIDATES');
   const id=Number(request.technicianId);
   if(!Number.isInteger(id)||id!==f.available_candidate_ids[0])return reject(c,'TECHNICIAN_MUST_BE_NEXT_RANKED_ELIGIBLE_CANDIDATE');
+  let selected;
+  try{selected=JSON.parse(request.knowledgeChunkIds||'[]');}catch{return reject(c,'INVALID_KNOWLEDGE_SELECTION');}
+  if(!Array.isArray(selected)||selected.length>3||selected.some(x=>typeof x!=='string')||new Set(selected).size!==selected.length)return reject(c,'INVALID_KNOWLEDGE_SELECTION');
+  const knowledge=JSON.parse(JSON.stringify(row.knowledge||{status:'UNAVAILABLE',chunks:[]}));
+  if(knowledge.status==='INVALID_SELECTION')return reject(c,'STALE_OR_WRONG_ASSET_KNOWLEDGE');
+  if(knowledge.status==='VERIFIED'&&(knowledge.ifc_global_id!==c.ticket.ifc_global_id||knowledge.chunks.length!==selected.length||knowledge.chunks.some((d,i)=>d.metadata.ifc_global_id!==c.ticket.ifc_global_id||d.metadata.chunk_id!==selected[i])))return reject(c,'STALE_OR_WRONG_ASSET_KNOWLEDGE');
+  if(knowledge.status!=='VERIFIED')knowledge.chunks=[];
   const tech=row.candidates.find(x=>Number(x.technician_id)===id);
   const deadline=new Date(Math.min(c.now.getTime()+48*3600000,f.urgent?Date.parse(s.urgent_start):Infinity));let date=s.original_date;
   if(!f.urgent){const earliest=new Date(deadline.getTime()+600000);if(atRome(date,14)<=earliest){date=localDate(earliest);while([0,6].includes(new Date(date+'T12:00:00Z').getUTCDay())||atRome(date,14)<=earliest)date=addDays(date,1);}}
   const o={id:row.nonce,token:row.token,technician_id:id,full_name:tech.full_name,email:tech.email,date,slot:f.urgent?'08:00-10:00':'14:00-16:00',status:'SENDING',reserved_at:c.now.toISOString(),expires_at:deadline.toISOString()};
+  o.technical_knowledge=knowledge;
   s.offers.push(o);s.status='DISPATCHING';
   const url=c.config.callbackBase.replace(/\/$/,'')+`/cbm-wf1-offer?ticket=${c.ticket.id}&offer=${encodeURIComponent(o.id)}&token=${o.token}`;
   const cutoff=f.urgent?`Respond within 48 hours or before ${escapeHtml(new Date(s.urgent_start).toLocaleString('en-GB',{timeZone:'Europe/Rome'}))} (Europe/Rome), whichever is earlier.`:'Respond within 48 hours of sending.';
-  queue(c,`offer:${o.id}`,o.email,`[CBM] Job offer - ticket #${c.ticket.id}`,`<h3>Maintenance job offer</h3><p>Hello ${escapeHtml(o.full_name)},</p>${details(c)}<p><b>Date:</b> ${o.date} <b>Slot:</b> ${o.slot} (Europe/Rome). Fixed, no rescheduling.</p><p>${cutoff}</p><p><a href="${escapeHtml(url+'&decision=accept')}">ACCEPT</a> | <a href="${escapeHtml(url+'&decision=deny')}">DENY</a></p><p>Confirm on the page that opens. This is an offer, not an assignment. For urgent work, another technician may receive an offer; the first valid persisted acceptance wins.</p>`,o.id);
+  queue(c,`offer:${o.id}`,o.email,`[CBM] Job offer - ticket #${c.ticket.id}`,`<h3>Maintenance job offer</h3><p>Hello ${escapeHtml(o.full_name)},</p>${details(c)}${technicalDetails(knowledge)}<p><b>Date:</b> ${o.date} <b>Slot:</b> ${o.slot} (Europe/Rome). Fixed, no rescheduling.</p><p>${cutoff}</p><p><a href="${escapeHtml(url+'&decision=accept')}">ACCEPT</a> | <a href="${escapeHtml(url+'&decision=deny')}">DENY</a></p><p>Confirm on the page that opens. This is an offer, not an assignment. For urgent work, another technician may receive an offer; the first valid persisted acceptance wins.</p>`,o.id);
   claim(c,s.messages[`offer:${o.id}`]);audit(c,'OFFER_RESERVED',{offer_id:o.id,technician_id:id});return finish(c);
 }
 function notice(request,row) {
@@ -148,7 +164,7 @@ function dispatchPolicy(request,row) {
 }
 function operationSource(operation) {
   const common=[active,terminal,audit,block,context,facts,finish,reject];
-  const extra={initialize:[escapeHtml,queue,localDate,addDays,atRome,details],offer_next:[escapeHtml,queue,claim,localDate,addDays,atRome,details],send_notices:[claim],process_events:[escapeHtml,queue],escalate:[escapeHtml,queue,details],ack:[],failure:[],read:[]};
+  const extra={initialize:[escapeHtml,queue,localDate,addDays,atRome,details],offer_next:[escapeHtml,queue,claim,localDate,addDays,atRome,details,technicalDetails],send_notices:[claim],process_events:[escapeHtml,queue],escalate:[escapeHtml,queue,details],ack:[],failure:[],read:[]};
   return [...common,...extra[operation],operations[operation]].map(fn=>fn.toString().startsWith('function')?fn.toString():`const ${fn.name} = ${fn.toString()};`).join('\n\n')+`\nconst runOperation = ${operations[operation].name};`;
 }
 module.exports={dispatchPolicy,operationSource};

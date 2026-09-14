@@ -10,12 +10,13 @@ Maintenance ticket intake, technician dispatch and IFC services.
 | `n8n_wf2_completion_approval_ifc_update.json` | Completion, facility-manager approval and IFC update workflow |
 | `phase_b/workflows/` | Seven saved helper workflows required by WF1 |
 | `phase_b/` | Dispatch source, builder, configuration and tests |
+| `knowledge/` | Supabase vector knowledge, native n8n synchronization, IFC/document extractor and tests |
 | `database/` | Approved PostgreSQL schema, migration runner, transaction functions and database tests |
 | `phase_a/` | Source for the current image-preparation node |
 | `ifc_service.py`, `capture_normalize.py` | IFC API and image normalization |
 | `calibrate_registration.py`, `create_sample_ifc.py` | Registration calibration and sample model utilities |
 | `schema.sql` | Legacy schema fixture used by the current workflow exports |
-| `docs/WF1_Native_Tools_Guide.docx` | Current architecture and node-by-node explanation |
+| `docs/WF1_Native_Tools_Guide.docx` | Dispatch architecture before the knowledge extension; see the current supplement below |
 
 ## Configure and import
 
@@ -24,6 +25,8 @@ The new 27-table database is implemented separately under the PostgreSQL `cbm` s
 Follow [the dispatch guide](phase_b/README.md) to configure `phase_b/deployment.local.json`, import the seven helpers, bind their IDs and import WF1. The exported workflows contain template settings. Configure the existing Phase A service endpoints and credentials in n8n as well.
 
 The private local deployment file is retained and ignored by Git. No workflow is activated by rebuilding these files.
+
+WF1 now also attaches a native **Supabase Vector Store** to the agent, with **OpenAI Embeddings** (`text-embedding-3-small`). See [technical knowledge setup and design](knowledge/README.md) for the separate Supabase schema, synchronization workflow, approved radiator mapping and invitation excerpts. The existing ticket database, Phase A and WF2 are preserved. Real radiator IFC/specification sources and service credentials are still required to populate and activate the integration.
 
 ## Build and test
 

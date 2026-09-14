@@ -8,6 +8,17 @@
   "gmailCredentialName": "CBM Gmail",
   "anthropicCredentialId": "REPLACE_ANTHROPIC_CREDENTIAL_ID",
   "anthropicCredentialName": "CBM Anthropic",
+  "knowledge": {
+    "supabaseCredentialId": "REPLACE_SUPABASE_CREDENTIAL_ID",
+    "supabaseCredentialName": "CBM Supabase Knowledge",
+    "postgresCredentialId": "REPLACE_SUPABASE_POSTGRES_CREDENTIAL_ID",
+    "postgresCredentialName": "CBM Supabase Postgres",
+    "openaiCredentialId": "REPLACE_OPENAI_CREDENTIAL_ID",
+    "openaiCredentialName": "CBM OpenAI Embeddings",
+    "snapshotUrl": "http://127.0.0.1:8001/knowledge/snapshot",
+    "sourceCredentialId": "REPLACE_KNOWLEDGE_HEADER_CREDENTIAL_ID",
+    "sourceCredentialName": "CBM Knowledge Source Header"
+  },
   "workflowIds": {
     "initialize": "d7bdaa41c660ddf514f47ca5732b05aa",
     "offer_next": "8555b0e787152959ac42a92dc914182e",

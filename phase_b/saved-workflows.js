@@ -2,10 +2,11 @@
 const sql=require('./queries');
 const {operationSource}=require('./operations');
 
-function buildSavedWorkflows({config,node,code,pg,condition,connect,id}) {
+function buildSavedWorkflows({config,node,code,pg,condition,connect,id,knowledge}) {
+  const {knowledge:knowledgeConfig,...dispatchConfig}=config;
   const definitions={
     initialize:['Dispatch - Initialize Ticket','Prepare Initial Dispatch',[]],
-    offer_next:['Dispatch - Send Technician Offer','Reserve Technician Offer',[{name:'technicianId',type:'number'}]],
+    offer_next:['Dispatch - Send Technician Offer','Reserve Technician Offer',[{name:'technicianId',type:'number'},{name:'knowledgeChunkIds',type:'string'}]],
     send_notices:['Dispatch - Send Notice','Claim Selected Notice',[{name:'noticeKey',type:'string'}]],
     process_events:['Dispatch - Process Responses','Apply Responses and Expiry',[]],
     escalate:['Dispatch - Escalate Ticket','Prepare Escalation',[]],
@@ -34,13 +35,19 @@ function buildSavedWorkflows({config,node,code,pg,condition,connect,id}) {
       connect(connections,entry,'Record Uninitialized Failure');entry='Record Uninitialized Failure';
     }
     nodes.push(pg('Load Ticket State',sql.LOAD,`={{ [JSON.stringify(${request})] }}`,440,0));
-    const prepare=operationSource(op)+`\nconst input=${request};\nif(!input.ticketId&&!input.sourceKey)throw new Error('A bound ticket or source identifier is required');\nconst request={...input,operation:${JSON.stringify(op)},config:${JSON.stringify(config)}};\nconst row=$json.context;\nconst d=runOperation(request,row);\nreturn [{json:{...d,ticketId:row.ticket?.id,revision:row.revision,assigning:row.ticket?.status!=='ASSIGNED'&&d.state?.status==='ASSIGNED'}}];`;
+    if(op==='offer_next')nodes.push(knowledge.knowledgePg('Verify Selected Technical Sources',require('../knowledge/nodes').OFFER,
+      `={{ [$("Load Ticket State").item.json.context.ticket?.ifc_global_id || "",${request}.knowledgeChunkIds || "[]"] }}`,550,-180,{onError:'continueRegularOutput'}));
+    const rowSource=op==='offer_next'?`{...$('Load Ticket State').item.json.context,knowledge:$json.knowledge || {status:'UNAVAILABLE',chunks:[]}}`:'$json.context';
+    const prepare=operationSource(op)+`\nconst input=${request};\nif(!input.ticketId&&!input.sourceKey)throw new Error('A bound ticket or source identifier is required');\nconst request={...input,operation:${JSON.stringify(op)},config:${JSON.stringify(dispatchConfig)}};\nconst row=${rowSource};\nconst d=runOperation(request,row);\nreturn [{json:{...d,ticketId:row.ticket?.id,revision:row.revision,assigning:row.ticket?.status!=='ASSIGNED'&&d.state?.status==='ASSIGNED'}}];`;
     nodes.push(code(prepareName,prepare,660,0));
     nodes.push(condition('State Changed?','={{ $json.write === true }}',880,0));
     nodes.push(pg('Commit Change',sql.COMMIT,'={{ [$json.ticketId,$json.revision,JSON.stringify($json.state),$json.assigning] }}',1100,0));
     nodes.push(condition('Commit Succeeded?','={{ $json.applied === true }}',1320,0));
     nodes.push(code('Retry Conflict',`if($runIndex>=4)throw new Error('Concurrent update retry limit reached. No uncommitted email was sent.');\nreturn [{json:${request}}];`,1320,220));
-    connect(connections,entry,'Load Ticket State');connect(connections,'Load Ticket State',prepareName);connect(connections,prepareName,'State Changed?');
+    connect(connections,entry,'Load Ticket State');
+    if(op==='offer_next'){connect(connections,'Load Ticket State','Verify Selected Technical Sources');connect(connections,'Verify Selected Technical Sources',prepareName);}
+    else connect(connections,'Load Ticket State',prepareName);
+    connect(connections,prepareName,'State Changed?');
     connect(connections,'State Changed?','Commit Change');connect(connections,'Commit Change','Commit Succeeded?');
     connect(connections,'Commit Succeeded?','Retry Conflict',1);connect(connections,'Retry Conflict','Load Ticket State');
     const sends=['offer_next','send_notices'].includes(op);
@@ -68,7 +75,10 @@ function buildSavedWorkflows({config,node,code,pg,condition,connect,id}) {
   };
   const tools=Object.entries(descriptions).map(([op,[name,description]],index)=>{
     const values={...bound};
-    if(op==='offer_next')values.technicianId='={{ $fromAI("technician_id", "The next unoffered eligible technician ID in the fixed shortlist returned by get_context", "number") }}';
+    if(op==='offer_next'){
+      values.technicianId='={{ $fromAI("technician_id", "The next unoffered eligible technician ID in the fixed shortlist returned by get_context", "number") }}';
+      values.knowledgeChunkIds='={{ $fromAI("knowledge_chunk_ids", "JSON array of up to three exact metadata.chunk_id strings selected from Radiator Technical Knowledge results for this ticket. Use [] when search is unavailable or no excerpt is relevant. Never invent IDs or send free-text specifications.", "string", "[]") }}';
+    }
     if(op==='send_notices')values.noticeKey='={{ $fromAI("notice_key", "Exact key of the pending notice selected from get_context, for example opening or assigned:fm", "string") }}';
     return node(name,'@n8n/n8n-nodes-langchain.toolWorkflow',{name,description,source:'database',workflowId:reference(op),workflowInputs:mapping(op,values)},2520+index*220,280,2.1);
   });

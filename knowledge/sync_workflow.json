@@ -1,0 +1,515 @@
+{
+  "id": "070c0110e6dd22489e332b73772d2c1f",
+  "name": "CBM - Synchronize IFC Technical Knowledge",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "b147cbd486ac211028446a124ed29e53",
+      "name": "Every Minute",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://127.0.0.1:8001/knowledge/snapshot",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "df4675f0ff9e5cd50246819903bf6969",
+      "name": "Read Approved IFC Sources",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_KNOWLEDGE_HEADER_CREDENTIAL_ID",
+          "name": "CBM Knowledge Source Header"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT public.cbm_begin_knowledge($1::jsonb) AS build;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($json)] }}",
+          "queryBatching": "single"
+        }
+      },
+      "id": "775a980c1045827ac4a7018a0a93dc42",
+      "name": "Begin Knowledge Generation",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        440,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_SUPABASE_POSTGRES_CREDENTIAL_ID",
+          "name": "CBM Supabase Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "bdcb8046e1ea84f4b571724bb57c7ba9",
+              "leftValue": "={{ $json.build.action === \"BUILD\" }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "c9a83114f5728e98982e3503cb3fb05f",
+      "name": "Build Required?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "fe8f5309e5bafd265aba09fd3e21f545",
+              "leftValue": "={{ $json.build.documents.length > 0 }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "d15d16808a3e29ae0d9ecf3842e9750a",
+      "name": "Embedding Needed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $json.build.documents.map(json=>({json}));"
+      },
+      "id": "31e613ac39810d3c85eef9120844a124",
+      "name": "Documents To Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "27da246a51401df7d5eb0e824ba5967c",
+      "name": "One Document At A Time",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1320,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "tableName": {
+          "__rl": true,
+          "value": "cbm_knowledge_documents",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "bae17b180f598a12bfeb4280de6b3696",
+      "name": "Supabase - Insert Document",
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreSupabase",
+      "typeVersion": 1.3,
+      "position": [
+        1540,
+        180
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "REPLACE_SUPABASE_CREDENTIAL_ID",
+          "name": "CBM Supabase Knowledge"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "text-embedding-3-small",
+        "options": {}
+      },
+      "id": "8577c76b848f0bcc9d96b93e8c02416f",
+      "name": "OpenAI Embeddings - Ingestion",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        1440,
+        440
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "REPLACE_OPENAI_CREDENTIAL_ID",
+          "name": "CBM OpenAI Embeddings"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "dataType": "json",
+        "jsonMode": "expressionData",
+        "jsonData": "={{ $json.content }}",
+        "textSplittingMode": "custom",
+        "options": {
+          "metadata": {
+            "metadataValues": [
+              {
+                "name": "generation",
+                "value": "={{ $json.metadata.generation }}"
+              },
+              {
+                "name": "chunk_id",
+                "value": "={{ $json.metadata.chunk_id }}"
+              },
+              {
+                "name": "ifc_global_id",
+                "value": "={{ $json.metadata.ifc_global_id }}"
+              },
+              {
+                "name": "product_id",
+                "value": "={{ $json.metadata.product_id }}"
+              },
+              {
+                "name": "source_id",
+                "value": "={{ $json.metadata.source_id }}"
+              },
+              {
+                "name": "source_title",
+                "value": "={{ $json.metadata.source_title }}"
+              },
+              {
+                "name": "source_revision",
+                "value": "={{ $json.metadata.source_revision }}"
+              },
+              {
+                "name": "page",
+                "value": "={{ $json.metadata.page }}"
+              },
+              {
+                "name": "source_sha256",
+                "value": "={{ $json.metadata.source_sha256 }}"
+              },
+              {
+                "name": "source_url",
+                "value": "={{ $json.metadata.source_url }}"
+              },
+              {
+                "name": "content_sha256",
+                "value": "={{ $json.metadata.content_sha256 }}"
+              },
+              {
+                "name": "embedding_model",
+                "value": "={{ $json.metadata.embedding_model }}"
+              },
+              {
+                "name": "model_sha256",
+                "value": "={{ $json.metadata.model_sha256 }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "5b89973fa415862afdde0d6d3d16487d",
+      "name": "Approved Document Loader",
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1.1,
+      "position": [
+        1700,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "chunkSize": 2000,
+        "chunkOverlap": 0,
+        "options": {}
+      },
+      "id": "43a52e9d66a3f01fe510f21df0721509",
+      "name": "Preserve Source Chunk",
+      "type": "@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter",
+      "typeVersion": 1,
+      "position": [
+        1840,
+        660
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://127.0.0.1:8001/knowledge/snapshot",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "69edbc7bb11c02fd1984de6cefd76ab2",
+      "name": "Recheck Source Snapshot",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        -80
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_KNOWLEDGE_HEADER_CREDENTIAL_ID",
+          "name": "CBM Knowledge Source Header"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT public.cbm_publish_knowledge($1::uuid,$2::text) AS publication;",
+        "options": {
+          "queryReplacement": "={{ [$(\"Begin Knowledge Generation\").first().json.build.generation,$json.fingerprint] }}",
+          "queryBatching": "single"
+        }
+      },
+      "id": "ba41cea12e17037e950c5ff22df63338",
+      "name": "Publish Complete Generation",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1980,
+        -80
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_SUPABASE_POSTGRES_CREDENTIAL_ID",
+          "name": "CBM Supabase Postgres"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every Minute": {
+      "main": [
+        [
+          {
+            "node": "Read Approved IFC Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Approved IFC Sources": {
+      "main": [
+        [
+          {
+            "node": "Begin Knowledge Generation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Begin Knowledge Generation": {
+      "main": [
+        [
+          {
+            "node": "Build Required?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Required?": {
+      "main": [
+        [
+          {
+            "node": "Embedding Needed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embedding Needed?": {
+      "main": [
+        [
+          {
+            "node": "Documents To Items",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Recheck Source Snapshot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Documents To Items": {
+      "main": [
+        [
+          {
+            "node": "One Document At A Time",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "One Document At A Time": {
+      "main": [
+        [
+          {
+            "node": "Recheck Source Snapshot",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Supabase - Insert Document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase - Insert Document": {
+      "main": [
+        [
+          {
+            "node": "One Document At A Time",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Embeddings - Ingestion": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Supabase - Insert Document",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approved Document Loader": {
+      "ai_document": [
+        [
+          {
+            "node": "Supabase - Insert Document",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preserve Source Chunk": {
+      "ai_textSplitter": [
+        [
+          {
+            "node": "Approved Document Loader",
+            "type": "ai_textSplitter",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recheck Source Snapshot": {
+      "main": [
+        [
+          {
+            "node": "Publish Complete Generation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Rome",
+    "executionTimeout": 300
+  }
+}

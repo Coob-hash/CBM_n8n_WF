@@ -1,5 +1,6 @@
 {
   "main": "../wf1_ticket_intake_and_dispatch.json",
+  "knowledgeSync": "../knowledge/sync_workflow.json",
   "workflowIds": {
     "initialize": "d7bdaa41c660ddf514f47ca5732b05aa",
     "offer_next": "8555b0e787152959ac42a92dc914182e",
