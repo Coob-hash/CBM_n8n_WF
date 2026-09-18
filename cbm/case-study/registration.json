@@ -1,0 +1,41 @@
+{
+  "approved": true,
+  "map_code": "MAP_J964JX6MGEGO",
+  "ifc_source_sha256": "3998286248fe687a4353b4cc3efde8275a2bff617319738942cb8738ac36cdc7",
+  "input_frame": "MULTISET_RHS_Y_UP_METRES",
+  "output_frame": "IFC_PROJECT_METRES",
+  "matrix": [
+    [
+      1.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      -1.0,
+      0.0
+    ],
+    [
+      0.0,
+      1.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "evidence": "Measured 2026-09-17: all seven MultiSet panorama stations match maddaloni 1.e57 under [x,-z,y], maximum residual 0.00000063 m. IFC source SHA256 verified. Scan/IFC identity checked against 504157 sampled scan points and independent samples of 21 structural elements; median surface residual 0.0277 m. Full evidence: cbm/case-study/registration-evidence/registration-validation.json and geometry-audit.json.",
+  "verified_at": "2026-09-17",
+  "verification_tolerance_m": 0.15,
+  "approval": {
+    "date": "2026-09-17",
+    "scope": "Local CBM office demo",
+    "confirmation": "Approve enabling this measured registration"
+  }
+}

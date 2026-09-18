@@ -1,0 +1,183 @@
+# Extension of the existing n8n_deploy project. Existing n8n data remains mounted.
+name: n8n_deploy
+services:
+  n8n:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: n8n-cbm:2.29.9
+    container_name: n8n_v1
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE: "true"
+      N8N_DEFAULT_BINARY_DATA_MODE: filesystem
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?Keep your existing n8n encryption key}
+      N8N_HOST: ${NGROK_DOMAIN:?Keep your existing ngrok domain}
+      N8N_PROTOCOL: https
+      N8N_EDITOR_BASE_URL: https://${NGROK_DOMAIN}
+      WEBHOOK_URL: https://${NGROK_DOMAIN}/
+      N8N_PROXY_HOPS: "1"
+      GENERIC_TIMEZONE: Europe/Rome
+      TZ: Europe/Rome
+      N8N_RUNNERS_MODE: external
+      N8N_RUNNERS_BROKER_LISTEN_ADDRESS: 0.0.0.0
+      N8N_RUNNERS_AUTH_TOKEN: ${CBM_RUNNERS_AUTH_TOKEN:?Run Initialize-Cbm.ps1}
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+      N8N_RESTRICT_FILE_ACCESS_TO: /files
+      NODE_FUNCTION_ALLOW_EXTERNAL: pdf-parse
+      NODE_EXTRA_CA_CERTS: /files/certs/supabase-ca.crt
+      NODE_FUNCTION_ALLOW_BUILTIN: fs,path,buffer,stream,util,zlib,events,crypto
+      IFC_SERVICE_URL: http://ifc-service:8000
+      OCR_SERVICE_URL: http://unlimited-ocr-adapter:8002
+      MULTISET_MAP_CODE: ${MULTISET_MAP_CODE:-MAP_J964JX6MGEGO}
+      CBM_TECHNICAL_SHEETS_DIR: /files/technical_sheets
+    volumes:
+      - C:/Users/USER/Desktop/n8n_test:/home/node/.n8n
+      - ./cbm/technical_sheets:/files/technical_sheets:ro
+      - ./cbm/openrouter/supabase-ca.crt:/files/certs/supabase-ca.crt:ro
+  task-runners:
+    build:
+      context: ./cbm
+      dockerfile: Dockerfile.runners
+    image: cbm-runners:2.29.9
+    restart: unless-stopped
+    environment:
+      N8N_RUNNERS_TASK_BROKER_URI: http://n8n:5679
+      N8N_RUNNERS_AUTH_TOKEN: ${CBM_RUNNERS_AUTH_TOKEN:?Run Initialize-Cbm.ps1}
+      GENERIC_TIMEZONE: Europe/Rome
+    depends_on:
+      - n8n
+  ngrok:
+    image: ngrok/ngrok@sha256:14d80d083e5b53145f416bbbd36238336c9de4016c43fd950eb2eb845670583b
+    container_name: ngrok_n8n
+    restart: unless-stopped
+    depends_on:
+      - n8n
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:?Keep your existing ngrok token}
+    command: ["http", "--url=${NGROK_DOMAIN}", "n8n:5678"]
+    ports:
+      - "4040:4040"
+  cbm-postgres:
+    image: postgres:16@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: cbm_demo
+      POSTGRES_USER: cbm_app
+      POSTGRES_PASSWORD: ${CBM_POSTGRES_PASSWORD:?Run Initialize-Cbm.ps1}
+    volumes:
+      - cbm_case_postgres:/var/lib/postgresql/data
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./database/schema_dispatch_functions.sql:/docker-entrypoint-initdb.d/02-dispatch.sql:ro
+      - ./database/schema_wf2_completion.sql:/docker-entrypoint-initdb.d/03-completion.sql:ro
+      - ./database/schema_wf3_dashboard.sql:/docker-entrypoint-initdb.d/04-dashboard.sql:ro
+      - ./database/schema_release_review.sql:/docker-entrypoint-initdb.d/05-review.sql:ro
+      - ./database/disable-fixture-technicians.sql:/docker-entrypoint-initdb.d/06-demo-recipients.sql:ro
+      - ./database/intake/schema_intake.sql:/docker-entrypoint-initdb.d/07-intake.sql:ro
+      - ./database/dispatch_queue/schema_queue.sql:/docker-entrypoint-initdb.d/08-dispatch-queue.sql:ro
+      - ./database/dispatch_queue/schema_context.sql:/docker-entrypoint-initdb.d/09-dispatch-context.sql:ro
+      - ./database/schema_wf2_strict_closure.sql:/docker-entrypoint-initdb.d/10-wf2-strict-closure.sql:ro
+      - ./database/technician_portal/schema.sql:/docker-entrypoint-initdb.d/11-technician-portal.sql:ro
+      - ./database/intake/schema_configuration_pause.sql:/docker-entrypoint-initdb.d/12-configuration-pause.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cbm_app -d cbm_demo"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  ifc-init:
+    build:
+      context: ./cbm
+      dockerfile: Dockerfile.python
+    image: cbm-python:2026.09.15-intake-approval
+    command: ["python", "/app/initialize_model.py"]
+    environment:
+      IFC_MODEL_DIR: /app/models
+      CBM_CASE_STUDY_DIR: /app/case-study
+    volumes:
+      - cbm_case_models:/app/models
+      - ./cbm/case-study:/app/case-study:ro
+    restart: "no"
+  ifc-service:
+    image: cbm-python:2026.09.15-intake-approval
+    restart: unless-stopped
+    environment:
+      IFC_MODEL_DIR: /app/models
+      CBM_CASE_STUDY_DIR: /app/case-study
+      AXIS_MODE: ${AXIS_MODE:-identity}
+      MULTISET_TO_IFC_MATRIX: ${MULTISET_TO_IFC_MATRIX:-null}
+    volumes:
+      - cbm_case_models:/app/models
+      - ./cbm/case-study:/app/case-study:ro
+    depends_on:
+      ifc-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+  knowledge-service:
+    image: cbm-python:2026.09.15-intake-approval
+    restart: unless-stopped
+    command: ["python", "-m", "uvicorn", "knowledge.service:app", "--host", "0.0.0.0", "--port", "8001"]
+    environment:
+      IFC_MODEL_DIR: /app/models
+      CBM_CASE_STUDY_DIR: /app/case-study
+      CBM_KNOWLEDGE_CATALOG: /app/knowledge-local/catalog.local.json
+      CBM_KNOWLEDGE_KEY: ${CBM_KNOWLEDGE_KEY:?Run Initialize-Cbm.ps1}
+    volumes:
+      - cbm_case_models:/app/models:ro
+      - ./cbm/case-study:/app/case-study:ro
+      - ./cbm/catalog:/app/knowledge-local:ro
+    depends_on:
+      ifc-init:
+        condition: service_completed_successfully
+  unlimited-ocr:
+    image: vllm/vllm-openai@sha256:542961a42d9183813819a23ef3a8b50bfb4f5ef7b0fb4f8e4f56edd8445efb18
+    restart: unless-stopped
+    gpus: all
+    ipc: host
+    shm_size: "8gb"
+    command:
+      - baidu/Unlimited-OCR
+      - --served-model-name
+      - Unlimited-OCR
+      - --trust-remote-code
+      - --logits_processors
+      - vllm.model_executor.models.unlimited_ocr:NGramPerReqLogitsProcessor
+      - --no-enable-prefix-caching
+      - --mm-processor-cache-gb
+      - "0"
+      - --gpu-memory-utilization
+      - "0.90"
+      - --max-model-len
+      - "16384"
+    volumes:
+      - unlimited_ocr_cache:/root/.cache/huggingface
+  unlimited-ocr-adapter:
+    build:
+      context: ./cbm/unlimited_ocr_adapter
+      dockerfile: Dockerfile
+    image: cbm-unlimited-ocr-adapter:1.0.0
+    restart: unless-stopped
+    environment:
+      UNLIMITED_OCR_VLLM_URL: http://unlimited-ocr:8000
+      UNLIMITED_OCR_MODEL: Unlimited-OCR
+      UNLIMITED_OCR_PDF_DPI: "200"
+      UNLIMITED_OCR_CONCURRENCY: "1"
+      UNLIMITED_OCR_MAX_PDF_BYTES: "52428800"
+      UNLIMITED_OCR_MAX_PAGES: "500"
+      UNLIMITED_OCR_REQUEST_TIMEOUT: "1200"
+    depends_on:
+      - unlimited-ocr
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+volumes:
+  cbm_case_models:
+  cbm_case_postgres:
+  unlimited_ocr_cache:

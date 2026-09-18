@@ -1,0 +1,17 @@
+{
+  "phase_b\\workflows\\initialize.json": "F6Jy5Oj83kbFMQCZ",
+  "n8n_wf3_fm_dashboard.json": "658IWGwRtDMsPri7",
+  "knowledge\\sync_workflow.json": "ZvjWnuW4lN0EFTdI",
+  "wf1_ticket_intake_and_dispatch.json": "YZb99Du8CBtsSy7f",
+  "wf2\\workflows\\notify_fm.json": "3sdjXyXedBKiDGXD",
+  "phase_b\\workflows\\failure.json": "aFLHB2kJNkSJ7Rig",
+  "wf2\\workflows\\log_ifc_maintenance.json": "eqrcZZLPvsjRgCUR",
+  "knowledge\\error_workflow.json": "NfWWu5n2L5vYXXav",
+  "phase_b\\workflows\\process_events.json": "feYC6MDEkiKT1vFJ",
+  "phase_b\\workflows\\ack.json": "r9dppIDsv4K3EBzo",
+  "phase_b\\workflows\\offer_next.json": "xgjzRT6ZUx2Q9J1q",
+  "phase_b\\workflows\\escalate.json": "Jtp8qKAXoahQPibf",
+  "phase_b\\workflows\\send_notices.json": "LkgsXHySuUApNjKw",
+  "n8n_wf2_completion_approval_ifc_update.json": "5quLJucpa0K4jWZS",
+  "technician_portal\\workflow.json": "cbmTechnicianPortal20260917"
+}

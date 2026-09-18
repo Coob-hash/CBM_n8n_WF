@@ -1,0 +1,18 @@
+{
+  "tests": [
+    "Existing WF1 nodes, positions, settings and connections preserved exactly",
+    "No database creation, schema modification or connection to production knowledge",
+    "New Code and expression syntax compile; native OCR/embedding contract is configured",
+    "Tables retain rows, headers, units and conditions; figures include annotation provenance",
+    "Missing/malformed figure annotations and incomplete page sequences fail closed",
+    "Large tables split only between rows and repeat header context",
+    "Incomplete insert stays inactive; complete import publishes all chunks",
+    "Same source hash and pipeline skip processing; changed files reimport",
+    "Changed document replaces publication without deleting historical chunks",
+    "Out-of-order concurrent publication cannot replace a newer completed import",
+    "Altered or duplicate stored chunks cannot be published as complete"
+  ],
+  "passed": 11,
+  "live_providers_called": false,
+  "production_database_modified": false
+}

@@ -1,0 +1,75 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "identified": {
+      "type": "boolean"
+    },
+    "global_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "visual_object_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "identification_confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "identification_evidence": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1200
+    },
+    "ambiguous": {
+      "type": "boolean"
+    },
+    "fault_observed": {
+      "type": "boolean"
+    },
+    "category": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "severity": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    },
+    "required_skill": {
+      "type": "string",
+      "enum": [
+        "carpentry",
+        "plumbing",
+        "electrical",
+        "hvac",
+        "general"
+      ]
+    }
+  },
+  "required": [
+    "identified",
+    "global_id",
+    "visual_object_id",
+    "identification_confidence",
+    "identification_evidence",
+    "ambiguous",
+    "fault_observed",
+    "category",
+    "severity",
+    "description",
+    "required_skill"
+  ]
+}

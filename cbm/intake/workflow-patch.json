@@ -1,0 +1,2064 @@
+{
+  "remove": [
+    "Create Triage Ticket",
+    "Notify FM - Manual Triage Needed",
+    "FM Resume Ticket",
+    "Validate FM Resume",
+    "Verify Resume Element",
+    "Read Resume Ticket",
+    "Prepare Resume State",
+    "Commit FM Resume",
+    "Resume Receipt",
+    "Resume Committed?",
+    "Check Duplicate",
+    "Is Duplicate?",
+    "Log Duplicate Report",
+    "Notify Reporter - Duplicate",
+    "IFC Element Found?"
+  ],
+  "upsert": [
+    {
+      "parameters": {
+        "content": "## Maddaloni intake and authorization\nInitial photo + at most 3 replacement photos, correlated by report UUID. Unresolved identification creates a persistent IT bug after capture 4; no FM asset-selection step. Automatic VPS + vision identification precedes a pending maintenance ticket. Explicit FM authorization is mandatory BEFORE dispatch. WF2 completion acceptance remains separate. See INTAKE_APPROVAL_GUIDE.md.",
+        "width": 520,
+        "height": 300,
+        "color": 4
+      },
+      "name": "Note -380x-260",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -380,
+        -260
+      ],
+      "id": "4331ee4db42c32fed7372349948f5095"
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "triggerOn": "specificFolder",
+        "folderToWatch": {
+          "__rl": true,
+          "value": "REPLACE_FOLDER_ID_01_INCOMING_SNAPSHOTS",
+          "mode": "id"
+        },
+        "event": "fileCreated",
+        "options": {}
+      },
+      "name": "Drive Trigger - New Snapshot",
+      "type": "n8n-nodes-base.googleDriveTrigger",
+      "typeVersion": 1,
+      "position": [
+        -380,
+        0
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "MZz9FdxIgYiIyTjp",
+          "name": "Google Drive account 2"
+        }
+      },
+      "id": "f4ca375f3200d17d167043d34f28926d"
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $(\"Capture Input\").first().json.id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "name": "Download Snapshot",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -160,
+        0
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "MZz9FdxIgYiIyTjp",
+          "name": "Google Drive account 2"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "id": "4b0bc0b79be52be6fde9d52bd36b6685"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare Image & Metadata\n// Turns the Drive binary into exactly what the MultiSet VPS query needs: a\n// normalized JPEG and the camera intrinsics that belong to those exact pixels.\n//\n// The pixel work runs in ifc_service (POST /captures/normalize) because it needs\n// Pillow, a compiled library that cannot run inside an n8n Code node. That is the\n// same reason /elements/nearest already lives there.\n//\n// The service reads FocalLengthIn35mmFilm from the photograph's own EXIF, bakes the\n// EXIF orientation into the pixels, and downscales to MultiSet's 1280 px limit. This\n// replaces the previous fixed-HFOV estimate, which assumed every photograph came from\n// a ~26 mm-equivalent lens, ignored the orientation tag entirely, and sent the image\n// at full resolution.\n\n// ---- CONFIG --------------------------------------------------------------\nlet IFC_SERVICE_URL = ''; \ntry { if ($env.IFC_SERVICE_URL) IFC_SERVICE_URL = $env.IFC_SERVICE_URL; } catch (e) { /* env access blocked */ }\nIFC_SERVICE_URL = IFC_SERVICE_URL.replace(/\\/+$/, '');\n\nconst LONG_SIDE = 1280;   // MultiSet's documented limit on the longer side\nconst HFOV_DEG  = 69;     // legacy estimate, fallback path only - always untrusted\n// --------------------------------------------------------------------------\n\nconst trg = $('Capture Input').first().json;\nconst fileName = trg.name || 'report_unknown_object.jpg';\nconst buf = await this.helpers.getBinaryDataBuffer(0, 'data');\n\n// Retained only for the fallback path below: when the service cannot be reached we\n// still need a plausible frame size to keep the item well-formed.\nfunction imageSize(b) {\n  // PNG\n  if (b.length > 24 && b.toString('ascii', 12, 16) === 'IHDR') {\n    return { width: b.readUInt32BE(16), height: b.readUInt32BE(20) };\n  }\n  // JPEG: walk the marker segments until the SOFn frame header\n  if (b[0] !== 0xFF || b[1] !== 0xD8) return null;\n  let i = 2;\n  while (i < b.length - 9) {\n    if (b[i] !== 0xFF) { i++; continue; }\n    const marker = b[i + 1];\n    if (marker === 0xFF) { i++; continue; }\n    if (marker === 0x01 || (marker >= 0xD0 && marker <= 0xD9)) { i += 2; continue; }\n    const len = b.readUInt16BE(i + 2);\n    const isSOF = marker >= 0xC0 && marker <= 0xCF &&\n                  marker !== 0xC4 && marker !== 0xC8 && marker !== 0xCC;\n    if (isSOF) return { height: b.readUInt16BE(i + 5), width: b.readUInt16BE(i + 7) };\n    i += 2 + len;\n  }\n  return null;\n}\n\n// PoC filename convention: report_<reporterEmail>_<freeText>.jpg\nconst parts = fileName.replace(/\\.[^.]+$/, '').split('_');\nconst reporterEmail = (parts[1] && parts[1].includes('@')) ? parts[1] : 'unknown@reporter';\n\nlet frame;\ntry {\n  const res = await this.helpers.httpRequest({\n    method: 'POST',\n    url: IFC_SERVICE_URL + '/captures/normalize',\n    body: { imageB64: buf.toString('base64'), longSide: LONG_SIDE },\n    json: true,\n    timeout: 60000,\n  });\n  const cam = res.camera;\n  frame = {\n    width: cam.width,\n    height: cam.height,\n    fx: cam.fx, fy: cam.fy, px: cam.px, py: cam.py,\n    imageB64: res.imageB64,\n    intrinsicsSource: cam.source,\n    intrinsicsCalibrated: cam.calibrated === true,\n    intrinsicsQuality: cam.quality,\n    sourceSha256: res.provenance.original_sha256,\n    // false when K failed the plausibility gate. The Confidence Gate routes such a\n    // capture to a new-photo request: a wrong K still yields a confident-looking pose.\n    intrinsicsTrusted: cam.trusted === true,\n    orientationApplied: res.image.orientation_applied,\n    sourceWidth: res.image.source_width,\n    sourceHeight: res.image.source_height,\n    lens: cam.lens || null,\n    gateRejections: res.gate_rejections || [],\n    normalizeError: null,\n  };\n} catch (err) {\n  // The service is unreachable, or it refused the photograph (HTTP 422: no usable\n  // EXIF). Keep the item well-formed so the retry state can be recorded, but mark\n  // it untrusted so it is never grounded against the IFC model.\n  const detail = (err && err.response && err.response.body && err.response.body.detail)\n    || (err && err.message) || String(err);\n  const size = imageSize(buf) || { width: 960, height: 720 };\n  const fx = Number(((size.width / 2) / Math.tan((HFOV_DEG * Math.PI / 180) / 2)).toFixed(4));\n  frame = {\n    width: size.width,\n    height: size.height,\n    fx, fy: fx, px: size.width / 2, py: size.height / 2,\n    imageB64: buf.toString('base64'),\n    intrinsicsSource: 'HFOV_FALLBACK',\n    intrinsicsTrusted: false,\n    orientationApplied: null,\n    sourceWidth: size.width,\n    sourceHeight: size.height,\n    lens: null,\n    gateRejections: [],\n    normalizeError: detail,\n  };\n}\n\nreturn [{\n  json: {\n    fileName,\n    reporterEmail,\n    photoUrl: trg.webViewLink || '',\n    ...frame,\n    // -> Vision LLM later on. Carries the normalized frame, so the vision step sees\n    // the same upright pixels MultiSet was asked about.\n    dataUri: 'data:image/jpeg;base64,' + frame.imageB64,\n  },\n  binary: $input.first().binary,\n}];"
+      },
+      "name": "Prepare Image & Metadata",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        0
+      ],
+      "id": "7ce74c82002f0328910872df3ca2b7ca"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.multiset.ai/v1/m2m/token",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "name": "MultiSet - Get Token",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        280,
+        0
+      ],
+      "credentials": {},
+      "onError": "continueErrorOutput",
+      "id": "babfb25632887bc6745f1ff1f5bfdd2e"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.multiset.ai/v1/vps/map/query",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ mapCode: $env.MULTISET_MAP_CODE, isRightHanded: true, resolution: { width: $('Prepare Image & Metadata').first().json.width, height: $('Prepare Image & Metadata').first().json.height }, cameraIntrinsics: { fx: $('Prepare Image & Metadata').first().json.fx, fy: $('Prepare Image & Metadata').first().json.fy, px: $('Prepare Image & Metadata').first().json.px, py: $('Prepare Image & Metadata').first().json.py }, queryImage: $('Prepare Image & Metadata').first().json.dataUri }) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "name": "MultiSet - Localize Snapshot",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        500,
+        0
+      ],
+      "onError": "continueErrorOutput",
+      "id": "22eafdf04c3b231e2a0731eac1dc7661"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.poseFound }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "leftValue": "={{ $json.confidence }}",
+              "rightValue": 0.3,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            },
+            {
+              "leftValue": "={{ $('Prepare Image & Metadata').first().json.intrinsicsTrusted }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        }
+      },
+      "name": "Confidence Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        720,
+        0
+      ],
+      "id": "26b465c5d8d5bd775463037c5cbf0f1d"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.IFC_SERVICE_URL.replace(/\\/+$/, '') + '/case-study/resolve' }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({x:$json.position.x,y:$json.position.y,z:$json.position.z,map_code:Array.isArray($json.mapCodes)?$json.mapCodes[0]:'',max_distance:3}) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "name": "Find IFC Element",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        940,
+        -160
+      ],
+      "onError": "continueErrorOutput",
+      "id": "4e3e9eea5c0842c716db08ef67ec1907"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({model:'claude-sonnet-4-6',max_tokens:1000,messages:[{role:'user',content:[\n {type:'image',source:{type:'base64',media_type:'image/jpeg',data:$('Prepare Image & Metadata').first().json.imageB64} },\n {type:'text',text:'Identify the main intended maintenance target in this photo using ONLY these nearby IFC candidates: '+JSON.stringify($('Find IFC Element').first().json.candidates)+'. The list comes from a registered VPS camera pose. Camera distance is NOT object identity. Match visible object type and distinguishing features to the IFC names/classes. If multiple candidates or visible targets remain plausible, do not guess. Generic IfcBuildingElementProxy can represent a radiator or outlet; use the family name and visible evidence. Never invent a GUID or a fault. A model/family name does not prove an installed product model. Return ONLY JSON: {\"identified\":boolean,\"global_id\":string|null,\"identification_confidence\":number 0-1,\"identification_evidence\":string,\"ambiguous\":boolean,\"category\":string,\"severity\":integer 1-5,\"description\":string,\"required_skill\":\"carpentry|plumbing|electrical|hvac|general\"}. Use identified=false and ambiguous=true when unresolved. Describe only visible or explicitly reported maintenance evidence; absence of visible damage is not evidence of a fault.'}\n ]}]}) }}",
+        "options": {
+          "timeout": 90000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "anthropicApi"
+      },
+      "name": "Vision Triage (Claude)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1600,
+        -280
+      ],
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "anthropicApi": {
+          "id": "rj0J6fDoCBVNb7d1",
+          "name": "Anthropic account"
+        }
+      },
+      "id": "5ce86dff9b28cf9b166d21b980d6bc7a"
+    },
+    {
+      "parameters": {
+        "jsCode": "const loc=$('MultiSet - Localize Snapshot').first().json;\nconst spatial=$('Find IFC Element').first().json;\nconst meta=$('Prepare Image & Metadata').first().json;\nlet triage={},triageValid=false,element=null,reason='TRIAGE_INVALID';\ntry {\n triage=JSON.parse(String($json.content?.find(x=>x.type==='text'||x.text)?.text||'').replace(/```json|```/g,'').trim());\n const matches=(spatial.candidates||[]).filter(x=>x.global_id===triage.global_id);\n const identified=triage.identified===true && triage.ambiguous===false && matches.length===1\n  && Number.isFinite(triage.identification_confidence) && triage.identification_confidence>=0.8 && triage.identification_confidence<=1\n  && typeof triage.identification_evidence==='string' && triage.identification_evidence.trim().length>=10;\n if(!identified)reason='ASSET_IDENTIFICATION_UNRESOLVED';\n if(identified)element={...matches[0],found:true,identification_evidence:triage.identification_evidence,identification_confidence:triage.identification_confidence};\n triageValid=identified && Number.isInteger(triage.severity)&&triage.severity>=1&&triage.severity<=5\n && ['carpentry','plumbing','electrical','hvac','general'].includes(triage.required_skill)\n && typeof triage.category==='string'&&triage.category.trim().length>0&&triage.category.length<=200\n && typeof triage.description==='string'&&triage.description.trim().length>0&&triage.description.length<=4000\n && !!loc.position && [loc.position.x,loc.position.y,loc.position.z,loc.confidence].every(Number.isFinite);\n}catch{}\nconst map=Array.isArray(loc.mapCodes)?loc.mapCodes[0]:null;\nreturn [{json:{...triage,triageValid,reason,position:loc.position,confidence:loc.confidence,mapCode:map,\nelement,reporterEmail:meta.reporterEmail,photoUrl:meta.photoUrl}}];"
+      },
+      "name": "Parse Triage JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1820,
+        -280
+      ],
+      "id": "0b70ea0e235cddfc1cbc4f6db226681e"
+    },
+    {
+      "parameters": {
+        "jsCode": "const triage=$input.first().json;\nconst sourceKey=String($('Capture Input').first().json.id || '');\nif(!sourceKey) throw new Error('Drive source ID is required for idempotent ticket creation.');\nif(!triage.element?.global_id || !triage.position || ![triage.position.x,triage.position.y,triage.position.z,triage.confidence].every(Number.isFinite)) throw new Error('Phase B requires valid localization.');\nif(!Number.isInteger(triage.severity) || triage.severity<1 || triage.severity>5 || !['carpentry','plumbing','electrical','hvac','general'].includes(triage.required_skill)) throw new Error('Invalid Phase A triage contract.');\nreturn [{json:{sourceKey,triage,ticketId:null}}];"
+      },
+      "id": "f7beac20d2d23e1a37f0475401dc16b6",
+      "name": "Create Ticket",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2040,
+        -280
+      ]
+    },
+    {
+      "name": "Process Each Drive Capture",
+      "id": "3bf6128ce912a3714c9243ceaf37a653",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "={{ $workflow.id }}",
+          "mode": "id"
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "position": [
+        1900,
+        4280
+      ]
+    },
+    {
+      "name": "One Capture Input",
+      "id": "2aefd5f8b00f80527d3799c674477d3a",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "position": [
+        600,
+        4460
+      ]
+    },
+    {
+      "name": "Capture Input",
+      "id": "58ed2ce10d6a141c29f1c37a90dcc555",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "const src=$input.first().json;\nconst parts=String(src.name||'').replace(/\\.[^.]+$/,'').split('_');\nconst email=parts[1]||'';\nif(parts[0]!=='report'||!/^[^\\s<>\"@]+@[^\\s<>\"@]+\\.[^\\s<>\"@]+$/.test(email)||!/^.+\\.(jpe?g|png)$/i.test(src.name||''))\n throw new Error('Use report_<reporter-email>_<report-UUID>_<photo>.jpg; a first photo may omit the UUID.');\nif(!/^[A-Za-z0-9_-]{1,200}$/.test(src.id||''))throw new Error('Missing Drive file id');\nconst reportId=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(parts[2]||'')?parts[2]:null;\nreturn [{json:{...src,report_id:reportId,reporter_email:email.toLowerCase()}}];"
+      },
+      "position": [
+        860,
+        4460
+      ]
+    },
+    {
+      "name": "Claim Capture Attempt",
+      "id": "6516bd28b61258f2f5dff531396176b5",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT cbm_capture_begin($1::jsonb) AS capture;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify({file_id:$json.id,report_id:$json.report_id,reporter_email:$json.reporter_email,photo_url:$json.webViewLink||'',execution_id:String($execution.id)})] }}"
+        }
+      },
+      "position": [
+        1120,
+        4460
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cbmLocalPg20260917",
+          "name": "CBM Postgres - Local Demo"
+        }
+      }
+    },
+    {
+      "name": "Capture Accepted?",
+      "id": "ce8a9a5294ab10496a985612f6504f9a",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "parameters": {
+        "conditions": {
+          "options": {
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.capture.process === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "position": [
+        1380,
+        4460
+      ]
+    },
+    {
+      "name": "Capture Normalized?",
+      "id": "060e6e76aebed392647004a447048ace",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "parameters": {
+        "conditions": {
+          "options": {
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.intrinsicsTrusted === true && !$json.normalizeError }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "position": [
+        1640,
+        4460
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.reason === 'AUTOMATIC_IDENTIFICATION_REQUIRED' && Array.isArray($json.candidates) && $json.candidates.length > 0 }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f4951e93a7fc9c100aa25ffd5097f9fb",
+      "name": "IFC Candidates Available?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1050,
+        -280
+      ]
+    },
+    {
+      "name": "Submit Ticket for FM Authorization",
+      "id": "a192cc6aaf33a83f7a30fd80ae93e1a5",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT cbm_capture_identified($1::uuid,$2::text,$3::jsonb) AS result;",
+        "options": {
+          "queryReplacement": "={{ [$('Claim Capture Attempt').first().json.capture.report_id,$('Capture Input').first().json.id,JSON.stringify($json)] }}"
+        }
+      },
+      "position": [
+        1900,
+        4460
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cbmLocalPg20260917",
+          "name": "CBM Postgres - Local Demo"
+        }
+      }
+    },
+    {
+      "name": "Classify Capture Failure",
+      "id": "b0178ac60df499d273f5f75557549644",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "const input=$input.first().json;\nlet reason='VPS_POSE_UNRESOLVED';\nif(input.error)reason='PROVIDER_OR_SERVICE_ERROR';\nelse if(typeof input.reason==='string'&&/^[A-Z][A-Z0-9_]{0,79}$/.test(input.reason))reason=input.reason;\nelse if(input.normalizeError||input.intrinsicsTrusted===false)reason='CAPTURE_NORMALIZATION_FAILED';\nreturn [{json:{report_id:$('Claim Capture Attempt').first().json.capture.report_id,file_id:$('Capture Input').first().json.id,reason}}];"
+      },
+      "position": [
+        600,
+        4640
+      ]
+    },
+    {
+      "name": "Record Capture Failure",
+      "id": "ea0b807a1147c7cdd507e4d68244b358",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT cbm_capture_failed($1::uuid,$2::text,$3::text) AS result;",
+        "options": {
+          "queryReplacement": "={{ [$json.report_id,$json.file_id,$json.reason] }}"
+        }
+      },
+      "position": [
+        860,
+        4640
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cbmLocalPg20260917",
+          "name": "CBM Postgres - Local Demo"
+        }
+      }
+    },
+    {
+      "name": "Recover Intake State",
+      "id": "3daff8122611826505c8a96a3a99c1f4",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT cbm_intake_recover() AS recovered;",
+        "options": {
+          "queryReplacement": "={{ [] }}"
+        }
+      },
+      "position": [
+        1120,
+        4640
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cbmLocalPg20260917",
+          "name": "CBM Postgres - Local Demo"
+        }
+      }
+    },
+    {
+      "name": "Claim Intake Notification",
+      "id": "410ec55bcc17c1165f5b06fd5d5392a9",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM cbm_intake_claim_notice();",
+        "options": {
+          "queryReplacement": "={{ [] }}"
+        }
+      },
+      "position": [
+        1380,
+        4640
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cbmLocalPg20260917",
+          "name": "CBM Postgres - Local Demo"
+        }
+      }
+    },
+    {
+      "name": "Prepare Intake Notification",
+      "id": "b942d1d4e967b28296237804fef68bb6",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "const row=$input.first().json,p=row.payload||{};\nconst base='https://REPLACE_N8N_HOST/webhook';\nconst fm='REPLACE_FM_EMAIL@example.com',it='REPLACE_IT_EMAIL@example.com';\nlet to=row.reporter_email,subject='[CBM] Report update',text='';\nswitch(row.kind){\n case 'RETRY':subject='[CBM] Please retry with a new photo';text='We could not identify the IFC asset. Report '+p.report_id+'. Capture '+p.attempts+' of 4. You have '+p.retries_remaining+' replacement photo(s) left.\\nTake a clearer photo, include the surrounding area, and make the intended target unambiguous.\\nDrive demo: upload a NEW file named report_'+to+'_'+p.report_id+'_<photo>.jpg. Keep this report ID for every retry.\\nDiagnostic: '+p.reason+'. If a service is unavailable, a new photo may also fail; after the third replacement the report is escalated to IT. No maintenance job has been dispatched.';break;\n case 'BUG_RECEIPT':subject='[CBM] Identification problem reported to IT';text='Report '+p.report_id+' could not be identified after four captures (the original and three replacements). Bug issue '+p.issue_id+' has been recorded and an IT notification queued. Stop uploading retries for this report. No maintenance ticket was commissioned.';break;\n case 'IT_BUG':to=it;subject='[CBM BUG] IFC identification exhausted three retries';text='Issue '+p.issue_id+'\\nReport '+p.report_id+'\\nMap MAP_J964JX6MGEGO\\nInspect the capture execution IDs, provider availability, camera metadata, map-to-IFC registration and automatic target identification. The FM is not responsible for this failure.\\n'+JSON.stringify(p.diagnostics,null,2);break;\n case 'AUTHORIZATION':{const reminder=p.reminder===true;to=fm;subject=(reminder?'[CBM Reminder] ':'[CBM] ')+'Authorize intervention - ticket #'+p.ticket_id;text=(reminder?'Reminder: this maintenance request still awaits your authorization.':'A new maintenance request awaits your authorization.')+' No technician has been contacted.\\nTicket #'+p.ticket_id+'\\nAsset: '+p.ifc_name+'\\nIFC GlobalId: '+p.ifc_global_id+'\\nIssue: '+p.description+'\\nSeverity: '+p.severity+'/5\\nPhoto: '+(p.photo_url||'see stored capture')+'\\nReview and explicitly approve or reject the INTERVENTION:\\n'+base+'/cbm-wf1-authorize?ticket='+p.ticket_id+'&authorization='+encodeURIComponent(p.authorization_id)+'&token='+encodeURIComponent(p.token)+'\\nThis link expires at '+p.expires_at+'. Expiry leaves the request pending and a fresh link is issued. Asset identification is automatic; this is a maintenance-authorization decision. Completion acceptance happens separately in WF2.';break;}\n case 'RECEIVED':subject='[CBM] Report received - ticket #'+p.ticket_id;text='Your report '+p.report_id+' identified an IFC asset. Ticket #'+p.ticket_id+' now awaits FM authorization before any technician is contacted.\\nThis is the submitter receipt; it cannot authorize the intervention. The FM receives a separate email titled \\\"[CBM] Authorize intervention - ticket #'+p.ticket_id+'\\\" containing the secure approval link.';break;\n case 'DUPLICATE':text='Your report '+p.report_id+' was linked to existing ticket #'+p.ticket_id+'. No additional job was created.';break;\n case 'REJECTED':subject='[CBM] Maintenance request rejected';text='The FM rejected the proposed intervention for ticket #'+p.ticket_id+'. No technician was dispatched for this request.';break;\n case 'BUSY':text='Report '+p.report_id+' is still processing its previous photo. Wait for the result. This upload did not consume a retry. If another photo is requested, upload it as a new Drive file with the same report ID.';break;\n case 'FINISHED':text='Report '+p.report_id+' is already '+p.state+'. This extra upload did not start another job or reset the retry counter.';break;\n default:throw new Error('Unknown intake notification kind');\n}\nif(!/^[^\\s<>\"@]+@[^\\s<>\"@]+\\.[^\\s<>\"@]+$/.test(to||'')||to.includes('REPLACE'))throw new Error('Configure the notification recipient before publishing');\nreturn [{json:{...row,to,subject,text}}];"
+      },
+      "position": [
+        1640,
+        4640
+      ]
+    },
+    {
+      "name": "Send Intake Notification",
+      "id": "2ca1b629912c4b98c16adc880c2a1e3d",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "parameters": {
+        "operation": "send",
+        "sendTo": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "text",
+        "message": "={{ $json.text }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "position": [
+        1900,
+        4640
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "R5EQDxDzCMYdMH9U",
+          "name": "Gmail account 3"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": false
+    },
+    {
+      "name": "Record Intake Notification Receipt",
+      "id": "449f6a7887d2e42b6ecf4ab352062ed5",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE cbm_intake_outbox SET status=CASE WHEN nullif($3::text,'') IS NOT NULL THEN 'SENT' ELSE 'UNCERTAIN' END,\n message_id=nullif($3::text,''),sent_at=CASE WHEN nullif($3::text,'') IS NOT NULL THEN clock_timestamp() END\n WHERE id=$1::bigint AND claim=$2::uuid AND status IN ('SENDING','UNCERTAIN') RETURNING id,status;",
+        "options": {
+          "queryReplacement": "={{ [$('Claim Intake Notification').first().json.id,$('Claim Intake Notification').first().json.claim,typeof $json.id === 'string' ? $json.id : null] }}"
+        }
+      },
+      "position": [
+        600,
+        4820
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cbmLocalPg20260917",
+          "name": "CBM Postgres - Local Demo"
+        }
+      }
+    },
+    {
+      "name": "View Intervention Authorization",
+      "id": "e98774efb9e819ae3cd5a7e581125a6e",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "cbm-wf1-authorize",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "position": [
+        860,
+        4820
+      ],
+      "webhookId": "3f3d10dfb5d076ca3ac0abd28e90cb6b"
+    },
+    {
+      "name": "View Intervention Authorization Input",
+      "id": "4a437c37f640399ffd2e055e764104d7",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "const p=$json.query||{};\nconst valid=/^[1-9][0-9]{0,8}$/.test(String(p.ticket||''))&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(p.authorization||'')&&/^[a-f0-9]{64}$/.test(p.token||'')\n && Object.keys(p).every(k=>['ticket','authorization','token','decision'].includes(k));\nreturn [{json:{ticket:valid?Number(p.ticket):0,authorization:valid?p.authorization:'00000000-0000-0000-0000-000000000000',token:valid?p.token:'',decision:['approve','reject'].includes(p.decision)?p.decision:'invalid'}}];"
+      },
+      "position": [
+        1120,
+        4820
+      ]
+    },
+    {
+      "name": "Submit Intervention Authorization",
+      "id": "e8eef1a456a4dec8a551353d86d5913e",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "cbm-wf1-authorize",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "position": [
+        1380,
+        4820
+      ],
+      "webhookId": "7917d43c1bf48f0f56a1f16bf14bb371"
+    },
+    {
+      "name": "Submit Intervention Authorization Input",
+      "id": "f54a510609cc15d93592c122798476f0",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "const p=$json.body||{};\nconst valid=/^[1-9][0-9]{0,8}$/.test(String(p.ticket||''))&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(p.authorization||'')&&/^[a-f0-9]{64}$/.test(p.token||'')\n && Object.keys(p).every(k=>['ticket','authorization','token','decision'].includes(k));\nreturn [{json:{ticket:valid?Number(p.ticket):0,authorization:valid?p.authorization:'00000000-0000-0000-0000-000000000000',token:valid?p.token:'',decision:['approve','reject'].includes(p.decision)?p.decision:'invalid'}}];"
+      },
+      "position": [
+        1640,
+        4820
+      ]
+    },
+    {
+      "name": "Read Intervention Authorization",
+      "id": "85cb42d3cf5bd8c13072cc1d1f9d2323",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT (SELECT jsonb_build_object('ticket_id',id,'ifc_name',ifc_name,'ifc_global_id',ifc_global_id,\n 'description',description,'severity',severity,'photo_url',photo_before_url)\n FROM tickets WHERE id=$1 AND status='PENDING_AUTHORIZATION' AND dispatch_authorization_id=$2::uuid\n AND dispatch_authorization_token=$3 AND clock_timestamp()<dispatch_authorization_expires_at) AS authorization;",
+        "options": {
+          "queryReplacement": "={{ [$json.ticket,$json.authorization,$json.token] }}"
+        }
+      },
+      "position": [
+        1900,
+        4820
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cbmLocalPg20260917",
+          "name": "CBM Postgres - Local Demo"
+        }
+      }
+    },
+    {
+      "name": "Build Intervention Authorization Form",
+      "id": "ba0fe89ba7777d3440cce0d72b9f4640",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "const p=$('View Intervention Authorization Input').first().json,t=$json.authorization;\nconst e=v=>String(v??'').replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c]));\nconst valid=!!t;\nconst html='<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"referrer\" content=\"no-referrer\"><title>Authorize intervention</title></head><body>'+(valid?\n '<h1>Authorize intervention for ticket #'+e(t.ticket_id)+'</h1><p><strong>Asset:</strong> '+e(t.ifc_name)+' ('+e(t.ifc_global_id)+')</p><p><strong>Reported issue:</strong> '+e(t.description)+'</p><p><strong>Severity:</strong> '+e(t.severity)+'/5</p>'+\n (/^https:\\/\\//.test(t.photo_url||'')?'<p><a rel=\"noreferrer\" href=\"'+e(t.photo_url)+'\">View submitted photo</a></p>':'')+\n '<p>Your decision authorizes or rejects the maintenance intervention. The asset has been identified automatically. No technician is contacted before approval. Completion acceptance is separate.</p><form method=\"post\" action=\"https://REPLACE_N8N_HOST/webhook/cbm-wf1-authorize\"><input type=\"hidden\" name=\"ticket\" value=\"'+p.ticket+'\"><input type=\"hidden\" name=\"authorization\" value=\"'+p.authorization+'\"><input type=\"hidden\" name=\"token\" value=\"'+p.token+'\"><button name=\"decision\" value=\"approve\">Approve intervention</button> <button name=\"decision\" value=\"reject\">Reject intervention</button></form>'\n :'<h1>Authorization unavailable</h1><p>This link is invalid, expired or already used. Use the newest approval email.</p>')+'</body></html>';\nreturn [{json:{html,statusCode:valid?200:410}}];"
+      },
+      "position": [
+        600,
+        5000
+      ]
+    },
+    {
+      "name": "Show Intervention Authorization",
+      "id": "ede091e1c47adc9a4a90ac4b3c03b02e",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseCode": "={{ $json.statusCode }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              },
+              {
+                "name": "Cache-Control",
+                "value": "no-store"
+              }
+            ]
+          }
+        }
+      },
+      "position": [
+        860,
+        5000
+      ]
+    },
+    {
+      "name": "Persist Intervention Authorization",
+      "id": "10537d9d7b8393194d250a789d8007dd",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT cbm_authorize_dispatch($1::integer,$2::uuid,$3::text,$4::text) AS decision;",
+        "options": {
+          "queryReplacement": "={{ [$json.ticket,$json.authorization,$json.token,$json.decision] }}"
+        }
+      },
+      "position": [
+        1120,
+        5000
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cbmLocalPg20260917",
+          "name": "CBM Postgres - Local Demo"
+        }
+      }
+    },
+    {
+      "name": "Intervention Authorization Receipt",
+      "id": "da54fdecc863564741d2979995a56d66",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.decision }}",
+        "options": {
+          "responseCode": "={{ $json.decision.applied ? 200 : 409 }}"
+        }
+      },
+      "position": [
+        1380,
+        5000
+      ]
+    },
+    {
+      "name": "Intervention Authorized?",
+      "id": "1785b8ebdca1f2c3aef99bea93e7e1cd",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "parameters": {
+        "conditions": {
+          "options": {
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.decision.applied === true && $json.decision.approved === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "position": [
+        1640,
+        5000
+      ]
+    },
+    {
+      "name": "Authorized Ticket Context",
+      "id": "6a67a6a1387355ebd681ad014ec4dfe2",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "return [{json:{ticketId:$json.decision.ticketId}}];"
+      },
+      "position": [
+        1900,
+        5000
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE cbm_intake_outbox o SET status='SENDING',claim=gen_random_uuid(),claimed_at=clock_timestamp()\nWHERE o.id=(SELECT q.id FROM cbm_intake_outbox q\n JOIN tickets t ON t.id=$1::integer\n WHERE q.kind='AUTHORIZATION' AND q.status='PENDING'\n AND q.payload->>'ticket_id'=t.id::text\n AND t.status='PENDING_AUTHORIZATION'\n AND q.payload->>'authorization_id'=t.dispatch_authorization_id::text\n AND q.payload->>'token'=t.dispatch_authorization_token\n AND t.dispatch_authorization_expires_at>clock_timestamp()\n ORDER BY q.id LIMIT 1 FOR UPDATE OF q SKIP LOCKED)\nRETURNING o.*;",
+        "options": {
+          "queryBatching": "independently",
+          "queryReplacement": "={{ [$json.result.ticket_id || null] }}"
+        }
+      },
+      "name": "Claim Ticket Authorization Email",
+      "id": "8c7f21bc-cceb-40c7-9250-dfae9805ae29",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3360,
+        2256
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cbmLocalPg20260917",
+          "name": "CBM Postgres - Local Demo"
+        }
+      },
+      "notes": "Immediately claims only this ticket’s pending FM approval email. Concurrent recovery uses the same outbox lock; an already claimed/sent notice is not sent again."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const row=$input.item.json,p=row.payload||{};\nconst base='https://bonanza-progress-hangover.ngrok-free.dev/webhook';\nconst fm='gruppo1isteagiovani@gmail.com',it='giuseppe.desiderio123@gmail.com';\nlet to=row.reporter_email,subject='[CBM] Report update',text='';\nswitch(row.kind){\n case 'RETRY':subject='[CBM] Please retry with a new photo';text='We could not identify the IFC asset. Report '+p.report_id+'. Capture '+p.attempts+' of 4. You have '+p.retries_remaining+' replacement photo(s) left.\\nTake a clearer photo, include the surrounding area, and make the intended target unambiguous.\\nDrive demo: upload a NEW file named report_'+to+'_'+p.report_id+'_<photo>.jpg. Keep this report ID for every retry.\\nDiagnostic: '+p.reason+'. If a service is unavailable, a new photo may also fail; after the third replacement the report is escalated to IT. No maintenance job has been dispatched.';break;\n case 'BUG_RECEIPT':subject='[CBM] Identification problem reported to IT';text='Report '+p.report_id+' could not be identified after four captures (the original and three replacements). Bug issue '+p.issue_id+' has been recorded and an IT notification queued. Stop uploading retries for this report. No maintenance ticket was commissioned.';break;\n case 'CONFIGURATION_IT':to=it;subject='[CBM configuration] Capture paused: '+p.reason;text='Report '+p.report_id+'\\nDrive file '+p.file_id+'\\nReason: '+p.reason+'\\nRepair the service configuration or wait for the unavailable provider to recover, then run this same Drive file through WF1 again. No replacement photo is required and this fault did not consume a photo attempt. Configuration event: '+p.configuration_event_id;break;\n case 'IT_BUG':to=it;subject='[CBM BUG] IFC identification exhausted three retries';text='Issue '+p.issue_id+'\\nReport '+p.report_id+'\\nMap MAP_J964JX6MGEGO\\nInspect the capture execution IDs, provider availability, camera metadata, map-to-IFC registration and automatic target identification. The FM is not responsible for this failure.\\n'+JSON.stringify(p.diagnostics,null,2);break;\n case 'AUTHORIZATION':{const reminder=p.reminder===true;to=fm;subject=(reminder?'[CBM Reminder] ':'[CBM] ')+'Authorize intervention - ticket #'+p.ticket_id;text=(reminder?'Reminder: this maintenance request still awaits your authorization.':'A new maintenance request awaits your authorization.')+' No technician has been contacted.\\nTicket #'+p.ticket_id+'\\nAsset: '+p.ifc_name+'\\nIFC GlobalId: '+p.ifc_global_id+'\\nIssue: '+p.description+'\\nSeverity: '+p.severity+'/5\\nPhoto: '+(p.photo_url||'see stored capture')+'\\nReview and explicitly approve or reject the INTERVENTION:\\n'+base+'/cbm-wf1-authorize?ticket='+p.ticket_id+'&authorization='+encodeURIComponent(p.authorization_id)+'&token='+encodeURIComponent(p.token)+'\\nThis link expires at '+p.expires_at+'. Expiry leaves the request pending and a fresh link is issued. Asset identification is automatic; this is a maintenance-authorization decision. Completion acceptance happens separately in WF2.';break;}\n case 'RECEIVED':subject='[CBM] Report received - ticket #'+p.ticket_id;text='Your report '+p.report_id+' identified an IFC asset. Ticket #'+p.ticket_id+' now awaits FM authorization before any technician is contacted.\\nThis is the submitter receipt; it cannot authorize the intervention. The FM receives a separate email titled \\\"[CBM] Authorize intervention - ticket #'+p.ticket_id+'\\\" containing the secure approval link.';break;\n case 'DUPLICATE':text='Your report '+p.report_id+' was linked to existing ticket #'+p.ticket_id+'. No additional job was created.';break;\n case 'REJECTED':subject='[CBM] Maintenance request rejected';text='The FM rejected the proposed intervention for ticket #'+p.ticket_id+'. No technician was dispatched for this request.';break;\n case 'BUSY':text='Report '+p.report_id+' is still processing its previous photo. Wait for the result. This upload did not consume a retry. If another photo is requested, upload it as a new Drive file with the same report ID.';break;\n case 'FINISHED':text='Report '+p.report_id+' is already '+p.state+'. This extra upload did not start another job or reset the retry counter.';break;\n default:throw new Error('Unknown intake notification kind');\n}\nif(!/^[^\\s<>\"@]+@[^\\s<>\"@]+\\.[^\\s<>\"@]+$/.test(to||'')||to.includes('REPLACE'))throw new Error('Configure the notification recipient before publishing');\nreturn {json:{...row,to,subject,text}};"
+      },
+      "name": "Prepare Ticket Authorization Email",
+      "id": "0e1e835f-9bda-4102-990b-8a89e1d3020b",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3600,
+        2256
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "text",
+        "message": "={{ $json.text }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "name": "Send Ticket Authorization Email",
+      "id": "35224591-d1c4-404e-a6c3-5953f84a025a",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        3840,
+        2256
+      ],
+      "retryOnFail": false,
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "R5EQDxDzCMYdMH9U",
+          "name": "Gmail account 3"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE cbm_intake_outbox SET status=CASE WHEN nullif($3::text,'') IS NOT NULL THEN 'SENT' ELSE 'UNCERTAIN' END,\n message_id=nullif($3::text,''),sent_at=CASE WHEN nullif($3::text,'') IS NOT NULL THEN clock_timestamp() END\n WHERE id=$1::bigint AND claim=$2::uuid AND status IN ('SENDING','UNCERTAIN') RETURNING id,status;",
+        "options": {
+          "queryReplacement": "={{ [$('Claim Ticket Authorization Email').item.json.id,$('Claim Ticket Authorization Email').item.json.claim,typeof $json.id === 'string' ? $json.id : null] }}",
+          "queryBatching": "independently"
+        }
+      },
+      "name": "Record Ticket Authorization Receipt",
+      "id": "6d2addb3-b071-46c0-a71f-49becf67d36e",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4080,
+        2256
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cbmLocalPg20260917",
+          "name": "CBM Postgres - Local Demo"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "7ca9cdbb-c82b-4ff9-9bf5-b4d7b63997e7",
+      "name": "Phase B Recovery Tick",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        2032,
+        3792
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM public.cbm_claim_dispatch_ticket($1::integer,$2::text);",
+        "options": {
+          "queryBatching": "single",
+          "queryReplacement": "={{ [$json.ticketId ?? null,String($execution.id)] }}"
+        }
+      },
+      "id": "c2545f9a-6dd6-4901-9c51-db5861724a7d",
+      "name": "Claim One Dispatch Ticket",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2448,
+        3792
+      ],
+      "alwaysOutputData": false,
+      "credentials": {
+        "postgres": {
+          "id": "cbmLocalPg20260917",
+          "name": "CBM Postgres - Local Demo"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Drive Trigger - New Snapshot": {
+      "main": [
+        [
+          {
+            "node": "Process Each Drive Capture",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Snapshot": {
+      "main": [
+        [
+          {
+            "node": "Prepare Image & Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Classify Capture Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Image & Metadata": {
+      "main": [
+        [
+          {
+            "node": "Capture Normalized?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MultiSet - Get Token": {
+      "main": [
+        [
+          {
+            "node": "MultiSet - Localize Snapshot",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Classify Capture Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MultiSet - Localize Snapshot": {
+      "main": [
+        [
+          {
+            "node": "Confidence Gate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Classify Capture Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confidence Gate": {
+      "main": [
+        [
+          {
+            "node": "Find IFC Element",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Classify Capture Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find IFC Element": {
+      "main": [
+        [
+          {
+            "node": "IFC Candidates Available?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Classify Capture Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vision Triage (Claude)": {
+      "main": [
+        [
+          {
+            "node": "Parse Triage JSON",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Classify Capture Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Triage JSON": {
+      "main": [
+        [
+          {
+            "node": "Triage Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Embeddings - Retrieval": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Radiator Technical Knowledge",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Radiator Technical Knowledge": {
+      "ai_tool": [
+        [
+          {
+            "node": "Dispatch Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Ticket": {
+      "main": [
+        [
+          {
+            "node": "Submit Ticket for FM Authorization",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Phase B Context": {
+      "main": [
+        [
+          {
+            "node": "Read Dispatch Memory",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Dispatch Memory": {
+      "main": [
+        [
+          {
+            "node": "Read Knowledge Identity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Knowledge Identity": {
+      "main": [
+        [
+          {
+            "node": "Dispatch Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch Claude Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Dispatch Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch Agent": {
+      "main": [
+        [
+          {
+            "node": "Verify Committed Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Committed Outcome": {
+      "main": [
+        [
+          {
+            "node": "Dispatch Settled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch Settled?": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Record Incomplete Execution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Incomplete Execution": {
+      "main": [
+        [
+          {
+            "node": "Operator Alert Needed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Operator Alert Needed?": {
+      "main": [
+        [
+          {
+            "node": "Notify FM - Dispatch Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Phase B Needs Attention",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify FM - Dispatch Error": {
+      "main": [
+        [
+          {
+            "node": "Phase B Needs Attention",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "create_ticket": {
+      "ai_tool": [
+        [
+          {
+            "node": "Dispatch Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "get_context": {
+      "ai_tool": [
+        [
+          {
+            "node": "Dispatch Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "initialize_dispatch": {
+      "ai_tool": [
+        [
+          {
+            "node": "Dispatch Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "send_offer": {
+      "ai_tool": [
+        [
+          {
+            "node": "Dispatch Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "send_notice": {
+      "ai_tool": [
+        [
+          {
+            "node": "Dispatch Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "process_events": {
+      "ai_tool": [
+        [
+          {
+            "node": "Dispatch Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "escalate": {
+      "ai_tool": [
+        [
+          {
+            "node": "Dispatch Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Phase B Recovery Tick": {
+      "main": [
+        [
+          {
+            "node": "Find Due Dispatch",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Recover Intake State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Due Dispatch": {
+      "main": [
+        [
+          {
+            "node": "Recovery Ticket Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recovery Ticket Context": {
+      "main": [
+        [
+          {
+            "node": "Phase B Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Offer Confirmation Page": {
+      "main": [
+        [
+          {
+            "node": "Offer Confirmation Page Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Offer Confirmation Page Input": {
+      "main": [
+        [
+          {
+            "node": "Check Offer Link",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Offer Link": {
+      "main": [
+        [
+          {
+            "node": "Build Confirmation Form",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Confirmation Form": {
+      "main": [
+        [
+          {
+            "node": "Show Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Offer Response Submission": {
+      "main": [
+        [
+          {
+            "node": "Offer Response Submission Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Offer Response Submission Input": {
+      "main": [
+        [
+          {
+            "node": "Record Offer Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Offer Response": {
+      "main": [
+        [
+          {
+            "node": "Response Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Response Receipt": {
+      "main": [
+        [
+          {
+            "node": "Acknowledge Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Acknowledge Response": {
+      "main": [
+        [
+          {
+            "node": "New Response?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "New Response?": {
+      "main": [
+        [
+          {
+            "node": "Response Ticket Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Response Ticket Context": {
+      "main": [
+        [
+          {
+            "node": "Phase B Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Triage Valid?": {
+      "main": [
+        [
+          {
+            "node": "Create Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Classify Capture Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Demo - Load Technical Sheets": {
+      "main": [
+        [
+          {
+            "node": "Demo - Source Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Demo - Source Settings": {
+      "main": [
+        [
+          {
+            "node": "Demo - Read Local PDFs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Demo - Read Local PDFs": {
+      "main": [
+        [
+          {
+            "node": "Demo - Fingerprint PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Demo - Fingerprint PDF": {
+      "main": [
+        [
+          {
+            "node": "Demo - One PDF at a Time",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Demo - One PDF at a Time": {
+      "main": [
+        [
+          {
+            "node": "Demo - Import Summary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Demo - Prepare PDF Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Demo - Prepare PDF Input": {
+      "main": [
+        [
+          {
+            "node": "Demo - Check Existing Import",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Demo - Check Existing Import": {
+      "main": [
+        [
+          {
+            "node": "Demo - Import Needed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Demo - Import Needed?": {
+      "main": [
+        [
+          {
+            "node": "Demo - OCR Text Tables and Figures",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Demo - One PDF at a Time",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Demo - OCR Text Tables and Figures": {
+      "main": [
+        [
+          {
+            "node": "Demo - Build Citable Multimodal Chunks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Demo - Build Citable Multimodal Chunks": {
+      "main": [
+        [
+          {
+            "node": "Demo - Chunks To Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Demo - Chunks To Items": {
+      "main": [
+        [
+          {
+            "node": "Demo - One Chunk at a Time",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Demo - One Chunk at a Time": {
+      "main": [
+        [
+          {
+            "node": "Demo - Collect Document Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Demo - Supabase Insert Vectors",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Demo - Collect Document Result": {
+      "main": [
+        [
+          {
+            "node": "Demo - Publish Complete Document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Demo - Supabase Insert Vectors": {
+      "main": [
+        [
+          {
+            "node": "Demo - One Chunk at a Time",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Demo - OpenAI Embeddings": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Demo - Supabase Insert Vectors",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Demo - Technical Document Loader": {
+      "ai_document": [
+        [
+          {
+            "node": "Demo - Supabase Insert Vectors",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Demo - Preserve Prepared Chunks": {
+      "ai_textSplitter": [
+        [
+          {
+            "node": "Demo - Technical Document Loader",
+            "type": "ai_textSplitter",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Demo - Publish Complete Document": {
+      "main": [
+        [
+          {
+            "node": "Demo - Verify Publication",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Demo - Verify Publication": {
+      "main": [
+        [
+          {
+            "node": "Demo - One PDF at a Time",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "One Capture Input": {
+      "main": [
+        [
+          {
+            "node": "Capture Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Capture Input": {
+      "main": [
+        [
+          {
+            "node": "Claim Capture Attempt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim Capture Attempt": {
+      "main": [
+        [
+          {
+            "node": "Capture Accepted?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Capture Accepted?": {
+      "main": [
+        [
+          {
+            "node": "Download Snapshot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Capture Normalized?": {
+      "main": [
+        [
+          {
+            "node": "MultiSet - Get Token",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Classify Capture Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IFC Candidates Available?": {
+      "main": [
+        [
+          {
+            "node": "Vision Triage (Claude)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Classify Capture Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Capture Failure": {
+      "main": [
+        [
+          {
+            "node": "Record Capture Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recover Intake State": {
+      "main": [
+        [
+          {
+            "node": "Claim Intake Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim Intake Notification": {
+      "main": [
+        [
+          {
+            "node": "Prepare Intake Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Intake Notification": {
+      "main": [
+        [
+          {
+            "node": "Send Intake Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Intake Notification": {
+      "main": [
+        [
+          {
+            "node": "Record Intake Notification Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "View Intervention Authorization": {
+      "main": [
+        [
+          {
+            "node": "View Intervention Authorization Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Submit Intervention Authorization": {
+      "main": [
+        [
+          {
+            "node": "Submit Intervention Authorization Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "View Intervention Authorization Input": {
+      "main": [
+        [
+          {
+            "node": "Read Intervention Authorization",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Intervention Authorization": {
+      "main": [
+        [
+          {
+            "node": "Build Intervention Authorization Form",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Intervention Authorization Form": {
+      "main": [
+        [
+          {
+            "node": "Show Intervention Authorization",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Submit Intervention Authorization Input": {
+      "main": [
+        [
+          {
+            "node": "Persist Intervention Authorization",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Intervention Authorization": {
+      "main": [
+        [
+          {
+            "node": "Intervention Authorization Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Intervention Authorization Receipt": {
+      "main": [
+        [
+          {
+            "node": "Intervention Authorized?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Intervention Authorized?": {
+      "main": [
+        [
+          {
+            "node": "Authorized Ticket Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Authorized Ticket Context": {
+      "main": [
+        [
+          {
+            "node": "Phase B Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Submit Ticket for FM Authorization": {
+      "main": [
+        [
+          {
+            "node": "Claim Ticket Authorization Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim Ticket Authorization Email": {
+      "main": [
+        [
+          {
+            "node": "Prepare Ticket Authorization Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Ticket Authorization Email": {
+      "main": [
+        [
+          {
+            "node": "Send Ticket Authorization Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Ticket Authorization Email": {
+      "main": [
+        [
+          {
+            "node": "Record Ticket Authorization Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

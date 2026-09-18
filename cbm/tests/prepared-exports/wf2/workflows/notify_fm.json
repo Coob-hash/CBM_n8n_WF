@@ -1,0 +1,163 @@
+{
+  "name": "[CBM Intake Approval 2026.09.15] CBM - WF2 Notify FM from Stored Result",
+  "nodes": [
+    {
+      "name": "Bound Context",
+      "id": "1035f3346805fd25649930e5cf298bcd",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "context",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Parse Context",
+      "id": "e084129603399b863ddb43785b86e1c7",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "jsCode": "return [{json:JSON.parse($json.context)}];"
+      }
+    },
+    {
+      "name": "Claim FM Closure Notice",
+      "id": "a1fc33188b0a43a24e2ba6be1582f486",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH claimed AS (\n INSERT INTO ticket_events(ticket_id,event,payload) SELECT id,'CBM_WF2_FM_NOTICE_CLAIM',jsonb_build_object('approval_id',approval_id)\n FROM tickets WHERE id=($1::jsonb->>'ticketId')::int AND status='CLOSED' AND approval_id=($1::jsonb->>'approvalId')::uuid\n ON CONFLICT DO NOTHING RETURNING ticket_id)\n SELECT t.*, $1::jsonb->>'fmEmail' AS fm_email FROM tickets t JOIN claimed c ON c.ticket_id=t.id;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($json)] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_POSTGRES_CREDENTIAL_ID",
+          "name": "CBM Postgres"
+        }
+      }
+    },
+    {
+      "name": "Send FM Closure Notice",
+      "id": "ec7e2984b83dbcfb5277ddff83a557b1",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "operation": "send",
+        "sendTo": "={{ $json.fm_email }}",
+        "emailType": "text",
+        "subject": "={{ \"[CBM] Ticket #\"+$json.id+\" closed - \"+($json.ifc_new_version ? \"IFC updated\" : \"IFC update pending or skipped\") }}",
+        "message": "={{ \"Ticket #\"+$json.id+\" is closed following FM approval. IFC result: \"+($json.ifc_new_version || \"No new IFC version recorded. Review CBM_WF2_ATTEMPT / CBM_WF2_IFC_RESULT events.\") }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "REPLACE_GMAIL_CREDENTIAL_ID",
+          "name": "CBM Gmail"
+        }
+      },
+      "retryOnFail": false
+    },
+    {
+      "name": "Record FM Notice Delivery",
+      "id": "a49b912795d5770da8c8224a625e18f1",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO ticket_events(ticket_id,event,payload) VALUES($1,'CBM_WF2_NOTICE',jsonb_build_object('notice_key','fm:closed','message_id',$2::text,'approval_id',$3::text)) RETURNING id;",
+        "options": {
+          "queryReplacement": "={{ [$(\"Claim FM Closure Notice\").first().json.id,$json.id,$(\"Claim FM Closure Notice\").first().json.approval_id] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_POSTGRES_CREDENTIAL_ID",
+          "name": "CBM Postgres"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Bound Context": {
+      "main": [
+        [
+          {
+            "node": "Parse Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Context": {
+      "main": [
+        [
+          {
+            "node": "Claim FM Closure Notice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim FM Closure Notice": {
+      "main": [
+        [
+          {
+            "node": "Send FM Closure Notice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send FM Closure Notice": {
+      "main": [
+        [
+          {
+            "node": "Record FM Notice Delivery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Rome"
+  },
+  "id": "cbmIntake2026091514",
+  "active": false
+}

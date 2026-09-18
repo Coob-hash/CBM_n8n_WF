@@ -1,0 +1,58 @@
+{
+  "main": "../wf1_ticket_intake_and_dispatch.json",
+  "knowledgeSync": "../knowledge/sync_workflow.json",
+  "workflowIds": {
+    "initialize": "d7bdaa41c660ddf514f47ca5732b05aa",
+    "offer_next": "8555b0e787152959ac42a92dc914182e",
+    "send_notices": "70f0d086a0627d430b5fa7ce5e262e05",
+    "process_events": "4572050930582ffecf96401f5d45633a",
+    "escalate": "7d48cc5ab0079a31980bf74bec758ec3",
+    "ack": "4361d78a5a6d12aa633dd66017a3f4db",
+    "failure": "b6faa41765004111126a29d6fdccb21a"
+  },
+  "helpers": [
+    {
+      "operation": "initialize",
+      "name": "Dispatch - Initialize Ticket",
+      "id": "d7bdaa41c660ddf514f47ca5732b05aa",
+      "file": "workflows/initialize.json"
+    },
+    {
+      "operation": "offer_next",
+      "name": "Dispatch - Send Technician Offer",
+      "id": "8555b0e787152959ac42a92dc914182e",
+      "file": "workflows/offer_next.json"
+    },
+    {
+      "operation": "send_notices",
+      "name": "Dispatch - Send Notice",
+      "id": "70f0d086a0627d430b5fa7ce5e262e05",
+      "file": "workflows/send_notices.json"
+    },
+    {
+      "operation": "process_events",
+      "name": "Dispatch - Process Responses",
+      "id": "4572050930582ffecf96401f5d45633a",
+      "file": "workflows/process_events.json"
+    },
+    {
+      "operation": "escalate",
+      "name": "Dispatch - Escalate Ticket",
+      "id": "7d48cc5ab0079a31980bf74bec758ec3",
+      "file": "workflows/escalate.json"
+    },
+    {
+      "operation": "ack",
+      "name": "Dispatch - Record Email Receipt",
+      "id": "4361d78a5a6d12aa633dd66017a3f4db",
+      "file": "workflows/ack.json"
+    },
+    {
+      "operation": "failure",
+      "name": "Dispatch - Record Incomplete Execution",
+      "id": "b6faa41765004111126a29d6fdccb21a",
+      "file": "workflows/failure.json"
+    }
+  ],
+  "production": "Import helpers first; verify or rebind IDs and publish them. Then import/review/publish WF1."
+}

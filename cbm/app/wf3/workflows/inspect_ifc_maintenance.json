@@ -1,0 +1,184 @@
+{
+  "id": "cbmWf3IfcInspect",
+  "name": "[CBM] WF3 - Inspect IFC Maintenance",
+  "active": false,
+  "nodes": [
+    {
+      "id": "62c90b65-62e6-5291-87f0-f5c3eb076f90",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "limit",
+              "type": "number"
+            },
+            {
+              "name": "offset",
+              "type": "number"
+            },
+            {
+              "name": "global_ids",
+              "type": "string"
+            },
+            {
+              "name": "search",
+              "type": "string"
+            },
+            {
+              "name": "model_version",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "4e716e79-1835-5a96-95a4-0d8dc27c3117",
+      "name": "Validate IFC Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst integer = (value, fallback, min, name) => {\n  if (value === undefined || value === null || value === '') return fallback;\n  const n = Number(value);\n  if (!Number.isSafeInteger(n) || n < min) throw new Error(name + ' must be an integer >= ' + min);\n  return n;\n};\nconst requested = integer(input.limit, 1, 1, 'limit');\nlet ids = input.global_ids || [];\nif (typeof ids === 'string') {try {ids = JSON.parse(ids);} catch {throw new Error('global_ids must be a JSON array of IFC GlobalIds');}}\nif (!Array.isArray(ids) || ids.length > 100 || ids.some(id => typeof id !== 'string' || !/^[A-Za-z0-9_$]{22}$/.test(id)))\n  throw new Error('global_ids must contain at most 100 valid IFC GlobalIds');\nconst search = String(input.search || '').trim();\nconst model = String(input.model_version || '').trim();\nif (search.length > 200) throw new Error('Search is too long');\nif (model && !/^[A-Za-z0-9_. -]+\\.ifc$/.test(model)) throw new Error('Invalid model version');\nreturn [{json:{limit:Math.min(requested,20),requested_limit:requested,\n offset:integer(input.offset,0,0,'offset'),global_ids:[...new Set(ids)].join(','),search,model_version:model}}];\n"
+      },
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "id": "55e05c69-a971-5ae9-a2d9-6c85961c4f4d",
+      "name": "Read IFC Maintenance",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "parameters": {
+        "method": "GET",
+        "url": "={{ ($env.IFC_SERVICE_URL || '').replace(/\\/+$/, '') + '/maintenance' }}",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "limit",
+              "value": "={{ $json.limit }}"
+            },
+            {
+              "name": "offset",
+              "value": "={{ $json.offset }}"
+            },
+            {
+              "name": "search",
+              "value": "={{ $json.search }}"
+            },
+            {
+              "name": "model_version",
+              "value": "={{ $json.model_version }}"
+            },
+            {
+              "name": "global_ids",
+              "value": "={{ $json.global_ids }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "id": "39b01090-dfc6-51c6-ac32-179d9c0d7f34",
+      "name": "Read Matched Technician Reports",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH refs AS (\n  SELECT value AS asset FROM jsonb_array_elements($1::jsonb)\n)\nSELECT coalesce(json_agg(x ORDER BY ticket_id),'[]'::json) AS interventions FROM (\n SELECT t.id AS ticket_id,t.ifc_global_id,t.status,t.closed_at,\n   tech.full_name AS technician_name,\n   (e.payload->>'approval_id'=t.approval_id::text) AS matches_current_approval,\n   s.report->>'work_performed' AS work_performed,s.report->>'findings' AS findings,\n   s.report->>'checks' AS checks,s.report->>'work_date' AS work_date,\n   s.report->>'materials' AS materials,s.report->>'remaining_issues' AS remaining_issues,\n   s.report->>'outcome' AS technician_outcome,s.drive_file_id AS report_file_id,\n   CASE WHEN s.id IS NULL AND e.payload->>'approval_id'=t.approval_id::text\n     THEN t.report_text END AS report_text\n FROM refs r JOIN tickets t ON t.id::text=r.asset->>'last_ticket_id'\n   AND t.ifc_global_id=r.asset->>'global_id'\n LEFT JOIN technicians tech ON tech.id=t.technician_id\n LEFT JOIN LATERAL (SELECT payload,created_at FROM ticket_events\n   WHERE ticket_id=t.id AND event='CBM_WF2_IFC_RESULT' AND payload->>'outcome'='SUCCEEDED'\n     AND payload->>'operation_key'=r.asset->'history'->0->>'operation_key'\n   ORDER BY id DESC LIMIT 1) e ON true\n LEFT JOIN LATERAL (SELECT id,report,drive_file_id FROM cbm_technician_submissions\n   WHERE ticket_id=t.id AND status='SUBMITTED' AND drive_file_id=t.report_file_id\n     AND submitted_at<=e.created_at AND e.payload->>'approval_id'=t.approval_id::text\n   ORDER BY submitted_at DESC LIMIT 1) s ON true\n) x;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($json.assets)] }}"
+        }
+      },
+      "position": [
+        720,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cbmLocalPg20260917",
+          "name": "CBM Postgres - Local Demo"
+        }
+      }
+    },
+    {
+      "id": "a65b2eb4-a4a4-5838-9898-901750628c64",
+      "name": "Return Maintained Assets",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "const r = $('Read IFC Maintenance').first().json;\nconst request = $('Validate IFC Request').first().json;\nconst rows = $input.first().json.interventions;\nif (r.source !== 'IFC' || !Array.isArray(r.assets) || !Array.isArray(rows))\n  throw new Error('Invalid IFC maintenance tool response');\nconst text = (v, max=1600) => v == null ? null : String(v).slice(0,max);\nconst assets = r.assets.map(a => {\n  const t = rows.find(t => String(t.ticket_id) === String(a.last_ticket_id) && t.ifc_global_id === a.global_id);\n  const matched = t?.matches_current_approval === true;\n  const fields = {work_performed:matched ? t.work_performed : null,\n    findings:matched ? t.findings : null,checks:matched ? t.checks : null,\n    remaining_issues:matched ? t.remaining_issues : null,materials:matched ? t.materials : null,\n    report_excerpt:matched && !t.work_performed ? t.report_text : null};\n  return {global_id:a.global_id,name:text(a.name),ifc_class:a.ifc_class,location:a.location,\n    maintenance_date:a.last_maintenance_date,ticket_id:a.last_ticket_id,ticket_status:t?.status || null,\n    technician:text(a.last_technician || t?.technician_name),condition:a.condition,approved_by:text(a.approved_by),\n    intervention_source:matched && t.work_performed ? 'matched_technician_submission' :\n      matched && t.report_text ? 'matched_ticket_report' : 'IFC_properties_only',\n    work_date:matched ? t.work_date : null,\n    ...Object.fromEntries(Object.entries(fields).map(([k,v])=>[k,text(v)])),\n    report_text_truncated:Object.values(fields).some(v=>v != null && String(v).length>1600),\n    ifc_description:text(a.last_description),\n    ifc_description_truncated:String(a.last_description || '').length>1600,\n    recorded_interventions:a.history_count};\n});\nreturn [{json:{source:'IFC model properties and matched PostgreSQL technician reports',\n model_version:r.version_file,model_sha256:r.version_sha256,inspected_at:r.inspected_at,\n order:r.order,count:assets.length,total_matching_assets:r.total_maintained_assets,\n total_matching_interventions:r.total_interventions,\n requested_limit:request.requested_limit,page_size:request.limit,offset:r.offset,\n has_more:r.has_more,next_offset:r.has_more ? r.offset+assets.length : null,\n filters:{global_ids:r.global_ids_filter,search:r.search},assets,\n note:'An IFC maintenance entry records a model update. ticket_status is the current database status. ifc_description may be the original fault; work_performed comes from the matched technician report.'}}];\n"
+      },
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Validate IFC Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate IFC Request": {
+      "main": [
+        [
+          {
+            "node": "Read IFC Maintenance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read IFC Maintenance": {
+      "main": [
+        [
+          {
+            "node": "Read Matched Technician Reports",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Matched Technician Reports": {
+      "main": [
+        [
+          {
+            "node": "Return Maintained Assets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

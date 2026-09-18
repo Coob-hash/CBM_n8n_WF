@@ -1,0 +1,797 @@
+{
+  "id": "cbmWf3TicketAction",
+  "name": "[CBM] WF3 - Guarded FM Ticket Action",
+  "active": true,
+  "nodes": [
+    {
+      "id": "2d881783-03b6-59e9-92ab-f392bd380129",
+      "name": "Action Input",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "context"
+            }
+          ]
+        }
+      },
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "141f66a4-8bcb-50c5-a2fd-90efba38d3ea",
+      "name": "Validate FM Action",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "const src = $input.first().json;\nconst p = typeof src.context === 'string' ? JSON.parse(src.context) : src.context;\nconst actions = ['approve_intervention','reject_intervention','resend_approval_email','approve_completion','request_rework'];\nif (!p || !actions.includes(p.action)) throw new Error('Unknown FM action');\nif (!Number.isSafeInteger(p.ticketId) || p.ticketId < 1) throw new Error('A positive ticket ID is required');\nif (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(p.approvalId || '')) throw new Error('Read the current approval ID with ticket_lookup');\nif (typeof p.expectedUpdatedAt !== 'string' || !Number.isFinite(Date.parse(p.expectedUpdatedAt))) throw new Error('Read the current timestamp with ticket_lookup');\nif (!['FM_CHAT','FM_EMAIL_LINK'].includes(p.actor) || p.truncated !== false) throw new Error('Incomplete authenticated FM request');\nfor (const key of ['requestId','sessionId','question']) if (typeof p[key] !== 'string' || !p[key].trim()) throw new Error('Missing '+key);\nconst reason = String(p.reason || '').trim();\nif (['reject_intervention','request_rework'].includes(p.action) && reason.length < 2) throw new Error('Ask the FM for a rejection/rework reason');\nif (reason.length > 2000 || p.question.length > 1500) throw new Error('Request is too long; ask for a shorter request');\nreturn [{json:{action:p.action,ticketId:p.ticketId,approvalId:p.approvalId,expectedUpdatedAt:p.expectedUpdatedAt,\n reason,actor:p.actor,truncated:false,requestId:p.requestId.slice(0,150),sessionId:p.sessionId.slice(0,150),question:p.question}}];\n"
+      },
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "id": "8116115a-989c-56d1-84d2-40aab80489a7",
+      "name": "Begin Guarded Action",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT cbm_wf3_begin_action($1::jsonb) AS result;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($json)] }}"
+        }
+      },
+      "position": [
+        480,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cbmLocalPg20260917",
+          "name": "CBM Postgres - Local Demo"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "d4b2fbaa-33b7-522d-9289-505c18f2b7bc",
+      "name": "Stored Action Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "const r=$json.result; return [{json:{...r,context:r.context?{...r.context,fmEmail:\"gruppo1isteagiovani@gmail.com\",ifcServiceUrl:String($env.IFC_SERVICE_URL||'').replace(/\\/+$/,'')}:null}}];"
+      },
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "id": "e308c72c-feb5-5564-a228-44188e10c8bf",
+      "name": "Action Ready?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "Action Ready?",
+              "leftValue": "={{ $json.outcome === 'READY' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "position": [
+        960,
+        0
+      ]
+    },
+    {
+      "id": "93ce5cbe-4c2a-5bc6-97df-ff24e2caee82",
+      "name": "Return Immediate Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "const {context,...result}=$json; return [{json:result}];"
+      },
+      "position": [
+        1200,
+        360
+      ]
+    },
+    {
+      "id": "2c1cbd07-8576-58bc-9f8d-fd8f70dcd801",
+      "name": "Completion Approval?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "Completion Approval?",
+              "leftValue": "={{ $json.route === 'completion_approve' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "position": [
+        1200,
+        0
+      ]
+    },
+    {
+      "id": "5c4d42c2-9f10-5342-950e-b636e3590a1d",
+      "name": "Reuse Guarded IFC Write",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "eqrcZZLPvsjRgCUR"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "context": "={{ JSON.stringify($('Stored Action Context').first().json.context) }}"
+          },
+          "schema": [
+            {
+              "id": "context",
+              "displayName": "context",
+              "type": "string",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            }
+          ],
+          "matchingColumns": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "position": [
+        1440,
+        -240
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "7a7607db-a691-5196-8211-7ba69e9b9c5c",
+      "name": "IFC Update Succeeded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "IFC Update Succeeded?",
+              "leftValue": "={{ $json.status === 'SUCCEEDED' && typeof $json.version_file === 'string' && $json.version_file.trim().length > 0 }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "position": [
+        1680,
+        -240
+      ]
+    },
+    {
+      "id": "88de07f6-5c4b-53bd-8956-acd39efac3ad",
+      "name": "Close with Existing IFC Guard",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT cbm_wf2_close_ticket($1::jsonb) AS result;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($('Stored Action Context').first().json.context)] }}"
+        }
+      },
+      "position": [
+        1920,
+        -240
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cbmLocalPg20260917",
+          "name": "CBM Postgres - Local Demo"
+        }
+      },
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "8ff17b80-9d1d-54c6-a9cd-e1abb60987cd",
+      "name": "Ticket Closed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "Ticket Closed?",
+              "leftValue": "={{ $json.result?.status === 'CLOSED' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "position": [
+        2160,
+        -240
+      ]
+    },
+    {
+      "id": "836522a3-681f-5638-ada3-adbf8f7cacb6",
+      "name": "Reuse Technician Statistics",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH receipt AS (\n INSERT INTO ticket_events(ticket_id,event,payload) SELECT id,'CBM_WF2_STATS',jsonb_build_object('approval_id',approval_id)\n FROM tickets WHERE id=($1::jsonb->>'ticketId')::int AND status='CLOSED' AND approval_id=($1::jsonb->>'approvalId')::uuid\n ON CONFLICT DO NOTHING RETURNING ticket_id)\n UPDATE technicians SET jobs_completed=jobs_completed+1 WHERE id IN (SELECT technician_id FROM tickets WHERE id IN (SELECT ticket_id FROM receipt)) RETURNING id,jobs_completed;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($('Stored Action Context').first().json.context)] }}"
+        }
+      },
+      "position": [
+        2400,
+        -240
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cbmLocalPg20260917",
+          "name": "CBM Postgres - Local Demo"
+        }
+      },
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "d9ed428d-74de-5b2c-babd-286bae65692e",
+      "name": "Reuse Technician Closure Notice",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "3sdjXyXedBKiDGXD"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "context": "={{ JSON.stringify({...$('Stored Action Context').first().json.context,noticeRecipient:\"technician\"}) }}"
+          },
+          "schema": [
+            {
+              "id": "context",
+              "displayName": "context",
+              "type": "string",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            }
+          ],
+          "matchingColumns": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "position": [
+        2640,
+        -240
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "bdbab080-129d-5596-a07a-36553378f410",
+      "name": "Reuse FM Closure Notice",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "3sdjXyXedBKiDGXD"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "context": "={{ JSON.stringify({...$('Stored Action Context').first().json.context,noticeRecipient:\"fm\"}) }}"
+          },
+          "schema": [
+            {
+              "id": "context",
+              "displayName": "context",
+              "type": "string",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            }
+          ],
+          "matchingColumns": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "position": [
+        2880,
+        -240
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "c2a6259a-c648-5991-bc01-14a13aed2e3a",
+      "name": "Rework Request?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "Rework Request?",
+              "leftValue": "={{ $json.route === 'completion_rework' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "position": [
+        1440,
+        180
+      ]
+    },
+    {
+      "id": "76b9fa61-a14a-5d6c-9ca8-fb5b754130b7",
+      "name": "Reuse Rework Transition",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH v AS (SELECT $1::jsonb AS p) UPDATE tickets SET status='REWORK',closed_at=NULL,fm_reject_reason=v.p->>'rejectionReason',updated_at=clock_timestamp() FROM v WHERE tickets.id=(v.p->>'ticketId')::int AND tickets.status='PENDING_APPROVAL' AND tickets.approval_id=(v.p->>'approvalId')::uuid AND EXISTS(SELECT 1 FROM ticket_events e WHERE e.ticket_id=tickets.id AND e.event='CBM_WF2_APPROVAL' AND e.payload->>'approval_id'=v.p->>'approvalId' AND e.payload->>'decision'='REJECTED') RETURNING tickets.id,tickets.status;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($('Stored Action Context').first().json.context)] }}"
+        }
+      },
+      "position": [
+        1680,
+        180
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cbmLocalPg20260917",
+          "name": "CBM Postgres - Local Demo"
+        }
+      },
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "c0384115-402a-51de-8842-79605f0f2247",
+      "name": "Reuse Technician Rework Notice",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "3sdjXyXedBKiDGXD"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "context": "={{ JSON.stringify({...$('Stored Action Context').first().json.context,noticeRecipient:\"technician\"}) }}"
+          },
+          "schema": [
+            {
+              "id": "context",
+              "displayName": "context",
+              "type": "string",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            }
+          ],
+          "matchingColumns": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "position": [
+        1920,
+        180
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "48d49a23-363c-5455-a2f3-fe052df93725",
+      "name": "Return Email Plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "return [{json:$json}];"
+      },
+      "position": [
+        1680,
+        540
+      ]
+    },
+    {
+      "id": "db3e507f-a965-575f-b4ea-29cd9e46b534",
+      "name": "Read Committed Action Outcome",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT cbm_wf3_finish_action($1::jsonb) AS result;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($('Stored Action Context').first().json.context)] }}"
+        }
+      },
+      "position": [
+        3120,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cbmLocalPg20260917",
+          "name": "CBM Postgres - Local Demo"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "c4f20a00-bc85-51c4-afd2-20f2c63a26c6",
+      "name": "Return Action Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "return [{json:$json.result || {outcome:\"INCOMPLETE\",reason:\"Could not read the committed result\"}}];"
+      },
+      "position": [
+        3360,
+        0
+      ]
+    },
+    {
+      "id": "674a1a6f-3e3d-51c7-abd2-30961f90be49",
+      "name": "Action helper notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "parameters": {
+        "content": "## WF3 actions only\nInitial decisions reuse cbm_authorize_dispatch. LOCALIZED is picked up by WF1.\nCompletion reuses the existing IFC + Gmail helpers unchanged. No CLOSED state before durable IFC success.\nEvery request is bound to an approval ID and the timestamp read by ticket_lookup.",
+        "width": 900,
+        "height": 180
+      },
+      "position": [
+        0,
+        -300
+      ]
+    }
+  ],
+  "connections": {
+    "Action Input": {
+      "main": [
+        [
+          {
+            "node": "Validate FM Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate FM Action": {
+      "main": [
+        [
+          {
+            "node": "Begin Guarded Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Begin Guarded Action": {
+      "main": [
+        [
+          {
+            "node": "Stored Action Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stored Action Context": {
+      "main": [
+        [
+          {
+            "node": "Action Ready?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Action Ready?": {
+      "main": [
+        [
+          {
+            "node": "Completion Approval?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Immediate Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Completion Approval?": {
+      "main": [
+        [
+          {
+            "node": "Reuse Guarded IFC Write",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Rework Request?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reuse Guarded IFC Write": {
+      "main": [
+        [
+          {
+            "node": "IFC Update Succeeded?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IFC Update Succeeded?": {
+      "main": [
+        [
+          {
+            "node": "Close with Existing IFC Guard",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Read Committed Action Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Close with Existing IFC Guard": {
+      "main": [
+        [
+          {
+            "node": "Ticket Closed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ticket Closed?": {
+      "main": [
+        [
+          {
+            "node": "Reuse Technician Statistics",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Read Committed Action Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reuse Technician Statistics": {
+      "main": [
+        [
+          {
+            "node": "Reuse Technician Closure Notice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reuse Technician Closure Notice": {
+      "main": [
+        [
+          {
+            "node": "Reuse FM Closure Notice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reuse FM Closure Notice": {
+      "main": [
+        [
+          {
+            "node": "Read Committed Action Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rework Request?": {
+      "main": [
+        [
+          {
+            "node": "Reuse Rework Transition",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Email Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reuse Rework Transition": {
+      "main": [
+        [
+          {
+            "node": "Reuse Technician Rework Notice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reuse Technician Rework Notice": {
+      "main": [
+        [
+          {
+            "node": "Read Committed Action Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Committed Action Outcome": {
+      "main": [
+        [
+          {
+            "node": "Return Action Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": {},
+  "pinData": {}
+}

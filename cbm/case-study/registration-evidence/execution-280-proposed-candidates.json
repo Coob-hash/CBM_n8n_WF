@@ -1,0 +1,36 @@
+{
+  "mode": "offline simulation only; deployed registration remains disabled",
+  "execution": 280,
+  "camera_position_ifc_m": [
+    -2.403296671349871,
+    -0.51428426727927,
+    -0.39582532273537296
+  ],
+  "reason_if_approved": "AUTOMATIC_IDENTIFICATION_REQUIRED",
+  "candidates": [
+    {
+      "global_id": "3kcZF9AH16IwPfuL_CGFlR",
+      "ifc_class": "IfcBuildingElementProxy",
+      "name": "HVAC_Heaters_Fondital_Calidor Super B4 BC 800 V03:_USE TYPE CATALOGUE_:226888",
+      "camera_distance_m": 1.789
+    },
+    {
+      "global_id": "1qMgWWNHzE3egAZbWFbgXF",
+      "ifc_class": "IfcBuildingElementProxy",
+      "name": "L22_EF_Box 503:L22_EF_Box 503_WM_Bipasso x2:219552",
+      "camera_distance_m": 1.804
+    },
+    {
+      "global_id": "0iXsb6cUbFTwXlliOwbsbD",
+      "ifc_class": "IfcDoor",
+      "name": "Porta - 1 Anta:80x210 cm:146453",
+      "camera_distance_m": 2.091
+    },
+    {
+      "global_id": "0iXsb6cUbFTwXlliOwbsaH",
+      "ifc_class": "IfcDoor",
+      "name": "Porta - 1 Anta:80x210 cm:146505",
+      "camera_distance_m": 2.989
+    }
+  ]
+}

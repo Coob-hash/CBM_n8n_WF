@@ -1,0 +1,1013 @@
+{
+  "id": "cbmWf3ApprovalMail",
+  "name": "[CBM] WF3 - Completion Approval Email",
+  "active": true,
+  "nodes": [
+    {
+      "id": "541bcf0e-3339-599c-93a3-4b03fc0f4b87",
+      "name": "Email Request",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "context"
+            }
+          ]
+        }
+      },
+      "position": [
+        -720,
+        0
+      ]
+    },
+    {
+      "id": "b3508b16-3dbb-5e35-81a8-7182ee8c4523",
+      "name": "Validate Resend Action",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "cbmWf3TicketAction"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "context": "={{ JSON.stringify(JSON.parse($json.context)) }}"
+          },
+          "schema": [
+            {
+              "id": "context",
+              "displayName": "context",
+              "type": "string",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            }
+          ],
+          "matchingColumns": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "position": [
+        -480,
+        0
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "3f311c42-85b9-5825-8d39-976bb6dbd8be",
+      "name": "Resend Ready?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "Resend Ready?",
+              "leftValue": "={{ $json.outcome === 'READY' && $json.route === 'completion_resend' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "position": [
+        -240,
+        0
+      ]
+    },
+    {
+      "id": "2cc5653f-c262-535c-b670-0e14e87bd19b",
+      "name": "Return Immediate Resend Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "return [{json:$json}];"
+      },
+      "position": [
+        -240,
+        240
+      ]
+    },
+    {
+      "id": "87a444ed-8135-5127-8164-171515d0cea7",
+      "name": "Read Email Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "return [{json:$json.context}];"
+      },
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "id": "c212ced2-95d1-5463-84b9-4b217bd7df50",
+      "name": "Claim Approval Email",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT cbm_wf3_prepare_email($1::jsonb) AS result;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($json)] }}"
+        }
+      },
+      "position": [
+        480,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cbmLocalPg20260917",
+          "name": "CBM Postgres - Local Demo"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "fd775dbc-531f-5118-861c-1ec489d87862",
+      "name": "New Email Claim?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "New Email Claim?",
+              "leftValue": "={{ $json.result?.outcome === 'SEND' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "id": "f74fdc7e-ac95-5a22-8dff-94aed7e0409a",
+      "name": "Compose Approval Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "const p=$json.result;\nconst esc=v=>String(v??'').replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c]));\nconst url=\"https://bonanza-progress-hangover.ngrok-free.dev\"+'/webhook/cbm-wf3-completion-approval?emailId='+encodeURIComponent(p.email_id)+'&token='+encodeURIComponent(p.token);\nconst report=/^[A-Za-z0-9_-]+$/.test(p.report_file_id||'')?'<p><a href=\"https://drive.google.com/file/d/'+esc(p.report_file_id)+'/view\">Technician report / Rapporto tecnico</a></p>':'';\nreturn [{json:{email_id:p.email_id,subject:'[CBM] Ticket #'+p.ticketId+' — completion approval',\nhtml:'<div style=\"font:16px Arial;max-width:650px;color:#172033\"><h2>Completion approval / Approvazione completamento</h2><p>Ticket #'+p.ticketId+' · '+esc(p.ifc_name)+'</p><p>'+esc(p.description)+'</p>'+report+'<p style=\"white-space:pre-wrap\">'+esc(p.report_text)+'</p><p><a style=\"background:#12594c;color:white;padding:14px;text-decoration:none;display:inline-block\" href=\"'+esc(url)+'\">Review and decide / Esamina e decidi</a></p><p>Opening the link makes no change. Confirm approval or request rework on the page. Closure requires a successful IFC update.</p><p>Expires / Scadenza: '+esc(p.expires_at)+'</p></div>'}}];"
+      },
+      "position": [
+        960,
+        0
+      ]
+    },
+    {
+      "id": "d87a9206-7058-587c-93d3-3bfcdb974aa1",
+      "name": "Send FM Approval Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "parameters": {
+        "sendTo": "gruppo1isteagiovani@gmail.com",
+        "subject": "={{ $json.subject }}",
+        "emailType": "html",
+        "message": "={{ $json.html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "position": [
+        1200,
+        0
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "R5EQDxDzCMYdMH9U",
+          "name": "Gmail account 3"
+        }
+      },
+      "retryOnFail": false,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "2b3c5128-a1db-50e3-9581-ef7d049317a1",
+      "name": "Capture Gmail Receipt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "const r=$json;const id=typeof r.id==='string'&&r.id?r.id:null;return [{json:{email_id:$('Compose Approval Email').first().json.email_id,send_status:id?'SENT':'UNCONFIRMED',message_id:id,error:id?null:String(r.error?.message||r.error||'Gmail did not return a message ID').slice(0,1000)}}];"
+      },
+      "position": [
+        1440,
+        0
+      ]
+    },
+    {
+      "id": "f20d6ed8-0e81-5fac-bdb1-c359d00c6782",
+      "name": "Record Approval Email Receipt",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT cbm_wf3_record_email($1::jsonb) AS result;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($json)] }}"
+        }
+      },
+      "position": [
+        1680,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cbmLocalPg20260917",
+          "name": "CBM Postgres - Local Demo"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "f6d795f7-557c-558d-98e5-c4a9535c770c",
+      "name": "Return Email Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "return [{json:$json.result}];"
+      },
+      "position": [
+        1920,
+        0
+      ]
+    },
+    {
+      "id": "394aa320-a19c-5856-ac3a-ee317953c6aa",
+      "name": "Read Resend Outcome",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT cbm_wf3_finish_action($1::jsonb) AS result;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify({...$('Read Email Context').first().json,emailResult:$json})] }}"
+        }
+      },
+      "position": [
+        2160,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cbmLocalPg20260917",
+          "name": "CBM Postgres - Local Demo"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "473355d8-102b-5753-bbeb-c60919fbc9ec",
+      "name": "Return Resend Outcome",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "return [{json:$json.result}];"
+      },
+      "position": [
+        2400,
+        0
+      ]
+    },
+    {
+      "id": "2e076a7f-693e-5e3e-b79d-8008607fd9de",
+      "name": "View Approval",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "cbm-wf3-completion-approval",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "position": [
+        0,
+        540
+      ],
+      "webhookId": "7424f683-f069-5483-9b38-542b61fa3f19"
+    },
+    {
+      "id": "d00d5b3e-3d1d-5a3c-bf95-daf490795a9a",
+      "name": "Read Link",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT cbm_wf3_email_access($1::jsonb) AS result;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify({emailId:$json.query?.emailId,token:$json.query?.token})] }}"
+        }
+      },
+      "position": [
+        240,
+        540
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cbmLocalPg20260917",
+          "name": "CBM Postgres - Local Demo"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "91eb63ab-7f6c-5b19-80af-1ed2e68533ba",
+      "name": "Render Confirmation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "const r = $input.first().json.result || {};\nconst esc = v => String(v ?? '').replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c]));\nconst shell = body => '<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>CBM Â· FM decision</title><style>body{font:17px system-ui;background:#f1f5f9;color:#172033;margin:0;padding:32px}main{max-width:680px;margin:auto;background:white;padding:32px;border-radius:16px}h1{font-size:25px}button{padding:12px 20px;border:0;border-radius:7px;background:#12594c;color:white;font-size:16px;cursor:pointer}button[value=reject]{background:#9b341c}textarea{display:block;width:95%;min-height:90px;margin:14px 0;padding:10px}small{color:#536173}.buttons{display:flex;gap:14px;flex-wrap:wrap}</style><main>'+body+'</main></html>';\nlet body;\nif (r.valid === true) {\n body = '<small>CBM Â· Completion approval / Approvazione completamento</small><h1>Ticket #'+esc(r.ticketId)+'</h1><p>'+esc(r.ifc_name)+'</p><p>'+esc(r.description)+'</p><p>Approve the completed work to update the IFC and close the ticket, or request rework with a reason. Opening this page makes no change.</p><form method=\"post\" action=\"https://bonanza-progress-hangover.ngrok-free.dev/webhook/cbm-wf3-completion-approval\"><input type=\"hidden\" name=\"emailId\" value=\"'+esc(r.emailId)+'\"><input type=\"hidden\" name=\"token\" value=\"'+esc(r.token)+'\"><label>Reason for rework / Motivo della rilavorazione<textarea name=\"reason\" maxlength=\"2000\"></textarea></label><div class=\"buttons\"><button name=\"decision\" value=\"approve\">Approve / Approva</button><button name=\"decision\" value=\"reject\">Request rework / Rilavorazione</button></div></form><p><small>A successful IFC update is required before closure.</small></p>';\n} else if (r.outcome) {\n const status = r.ticket_status || r.status || '';\n body = '<h1>'+esc(r.outcome)+'</h1><p>Ticket #'+esc(r.ticketId || '')+' Â· '+esc(status)+'</p><p>'+esc(r.reason || '')+'</p>';\n if (r.missing_operations?.length) body += '<p>Still incomplete: '+esc(r.missing_operations.join(', '))+'. Use the FM chat to inspect and retry the recorded decision.</p>';\n body += '<p>You can close this page and check the ticket in the FM chat.</p>';\n} else body = '<h1>Approval unavailable</h1><p>'+esc(r.reason || 'Invalid, expired, or already used approval link.')+'</p>';\nreturn [{json:{html:shell(body),statusCode:r.valid===false?409:200}}];\n"
+      },
+      "position": [
+        1200,
+        540
+      ]
+    },
+    {
+      "id": "e51e8bb8-e36c-559f-96a9-12c5b255141c",
+      "name": "Respond with Form",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseCode": "={{ $json.statusCode }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              },
+              {
+                "name": "Cache-Control",
+                "value": "no-store"
+              },
+              {
+                "name": "Referrer-Policy",
+                "value": "no-referrer"
+              }
+            ]
+          }
+        }
+      },
+      "position": [
+        1440,
+        540
+      ]
+    },
+    {
+      "id": "c361d0a6-07f0-5445-80ef-573fd255428e",
+      "name": "Confirm Approval",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "cbm-wf3-completion-approval",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "position": [
+        0,
+        1080
+      ],
+      "webhookId": "9275ce94-0605-5f2a-8a82-7ba923e275e1"
+    },
+    {
+      "id": "82e54372-9d65-537e-871f-ced6ac0d6aaa",
+      "name": "Read Decision",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT cbm_wf3_email_access($1::jsonb) AS result;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify({emailId:$json.body?.emailId,token:$json.body?.token,decision:$json.body?.decision||'missing',reason:$json.body?.reason||''})] }}"
+        }
+      },
+      "position": [
+        240,
+        1080
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cbmLocalPg20260917",
+          "name": "CBM Postgres - Local Demo"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "c3f1f926-f0ca-5adf-bf75-1b17231d1749",
+      "name": "Render Decision Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "const r = $input.first().json.result || {};\nconst esc = v => String(v ?? '').replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c]));\nconst shell = body => '<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>CBM Â· FM decision</title><style>body{font:17px system-ui;background:#f1f5f9;color:#172033;margin:0;padding:32px}main{max-width:680px;margin:auto;background:white;padding:32px;border-radius:16px}h1{font-size:25px}button{padding:12px 20px;border:0;border-radius:7px;background:#12594c;color:white;font-size:16px;cursor:pointer}button[value=reject]{background:#9b341c}textarea{display:block;width:95%;min-height:90px;margin:14px 0;padding:10px}small{color:#536173}.buttons{display:flex;gap:14px;flex-wrap:wrap}</style><main>'+body+'</main></html>';\nlet body;\nif (r.valid === true) {\n body = '<small>CBM Â· Completion approval / Approvazione completamento</small><h1>Ticket #'+esc(r.ticketId)+'</h1><p>'+esc(r.ifc_name)+'</p><p>'+esc(r.description)+'</p><p>Approve the completed work to update the IFC and close the ticket, or request rework with a reason. Opening this page makes no change.</p><form method=\"post\" action=\"https://bonanza-progress-hangover.ngrok-free.dev/webhook/cbm-wf3-completion-approval\"><input type=\"hidden\" name=\"emailId\" value=\"'+esc(r.emailId)+'\"><input type=\"hidden\" name=\"token\" value=\"'+esc(r.token)+'\"><label>Reason for rework / Motivo della rilavorazione<textarea name=\"reason\" maxlength=\"2000\"></textarea></label><div class=\"buttons\"><button name=\"decision\" value=\"approve\">Approve / Approva</button><button name=\"decision\" value=\"reject\">Request rework / Rilavorazione</button></div></form><p><small>A successful IFC update is required before closure.</small></p>';\n} else if (r.outcome) {\n const status = r.ticket_status || r.status || '';\n body = '<h1>'+esc(r.outcome)+'</h1><p>Ticket #'+esc(r.ticketId || '')+' Â· '+esc(status)+'</p><p>'+esc(r.reason || '')+'</p>';\n if (r.missing_operations?.length) body += '<p>Still incomplete: '+esc(r.missing_operations.join(', '))+'. Use the FM chat to inspect and retry the recorded decision.</p>';\n body += '<p>You can close this page and check the ticket in the FM chat.</p>';\n} else body = '<h1>Approval unavailable</h1><p>'+esc(r.reason || 'Invalid, expired, or already used approval link.')+'</p>';\nreturn [{json:{html:shell(body),statusCode:r.valid===false?409:200}}];\n"
+      },
+      "position": [
+        1200,
+        1080
+      ]
+    },
+    {
+      "id": "839b1b15-336a-595d-ad1c-759379d2aa28",
+      "name": "Respond with Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseCode": "={{ $json.statusCode }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              },
+              {
+                "name": "Cache-Control",
+                "value": "no-store"
+              },
+              {
+                "name": "Referrer-Policy",
+                "value": "no-referrer"
+              }
+            ]
+          }
+        }
+      },
+      "position": [
+        1440,
+        1080
+      ]
+    },
+    {
+      "id": "73c224a7-fd99-51d0-a76a-5b49d61eee11",
+      "name": "Current Decision Link?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "Current Decision Link?",
+              "leftValue": "={{ $json.result?.valid === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "position": [
+        480,
+        1080
+      ]
+    },
+    {
+      "id": "2bd122f1-4b8c-5515-b490-0db0ff687937",
+      "name": "Apply Confirmed FM Decision",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "cbmWf3TicketAction"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "context": "={{ JSON.stringify($json.result.context) }}"
+          },
+          "schema": [
+            {
+              "id": "context",
+              "displayName": "context",
+              "type": "string",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            }
+          ],
+          "matchingColumns": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "position": [
+        720,
+        1080
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "df065384-17a3-5ed3-b809-00d5e8c8c6b3",
+      "name": "Shape Decision Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "return [{json:{result:$json.outcome?$json:{outcome:'INCOMPLETE',reason:String($json.error?.message||$json.error||'Could not confirm the action result. Inspect the ticket in FM chat.')}}}];"
+      },
+      "position": [
+        960,
+        1080
+      ]
+    },
+    {
+      "id": "d59b8ae0-06af-5e58-973e-0a330ea425d3",
+      "name": "Approval Request Source",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "const p=typeof $json.context==='string'?JSON.parse($json.context):$json.context;if(!p||typeof p!=='object')throw new Error('Missing approval request');return [{json:{context:JSON.stringify(p),source:p.source||'FM_CHAT',request:p}}];"
+      },
+      "position": [
+        -720,
+        -200
+      ]
+    },
+    {
+      "id": "6e3f3b22-c65c-5eed-adb7-d97ef4d443a0",
+      "name": "WF2 Report Request?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "WF2 Report Request?",
+              "leftValue": "={{ $json.source === 'WF2_REPORT' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "position": [
+        -480,
+        -200
+      ]
+    },
+    {
+      "id": "5fc0a14f-82f2-5480-a855-824d945a21b0",
+      "name": "Claim WF2 Review Email",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT cbm_wf2_prepare_review_email($1::jsonb) AS result;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($json.request)] }}"
+        }
+      },
+      "position": [
+        480,
+        -200
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cbmLocalPg20260917",
+          "name": "CBM Postgres - Local Demo"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "bb24d611-885d-5032-a485-ca8d8bb3123a",
+      "name": "WF2 Email Result?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "WF2 Email Result?",
+              "leftValue": "={{ $('Approval Request Source').first().json.source === 'WF2_REPORT' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "position": [
+        2160,
+        -200
+      ]
+    },
+    {
+      "id": "71c888f6-2d94-515d-9d2a-df3d1a5838c3",
+      "name": "Return WF2 Email Receipt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "return [{json:$json}];"
+      },
+      "position": [
+        2400,
+        -200
+      ]
+    }
+  ],
+  "connections": {
+    "Email Request": {
+      "main": [
+        [
+          {
+            "node": "Approval Request Source",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Resend Action": {
+      "main": [
+        [
+          {
+            "node": "Resend Ready?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resend Ready?": {
+      "main": [
+        [
+          {
+            "node": "Read Email Context",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Immediate Resend Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Email Context": {
+      "main": [
+        [
+          {
+            "node": "Claim Approval Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim Approval Email": {
+      "main": [
+        [
+          {
+            "node": "New Email Claim?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "New Email Claim?": {
+      "main": [
+        [
+          {
+            "node": "Compose Approval Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Email Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compose Approval Email": {
+      "main": [
+        [
+          {
+            "node": "Send FM Approval Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send FM Approval Email": {
+      "main": [
+        [
+          {
+            "node": "Capture Gmail Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Capture Gmail Receipt": {
+      "main": [
+        [
+          {
+            "node": "Record Approval Email Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Approval Email Receipt": {
+      "main": [
+        [
+          {
+            "node": "Return Email Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Return Email Result": {
+      "main": [
+        [
+          {
+            "node": "WF2 Email Result?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Resend Outcome": {
+      "main": [
+        [
+          {
+            "node": "Return Resend Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "View Approval": {
+      "main": [
+        [
+          {
+            "node": "Read Link",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Render Confirmation": {
+      "main": [
+        [
+          {
+            "node": "Respond with Form",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Link": {
+      "main": [
+        [
+          {
+            "node": "Render Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confirm Approval": {
+      "main": [
+        [
+          {
+            "node": "Read Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Render Decision Result": {
+      "main": [
+        [
+          {
+            "node": "Respond with Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Decision": {
+      "main": [
+        [
+          {
+            "node": "Current Decision Link?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Current Decision Link?": {
+      "main": [
+        [
+          {
+            "node": "Apply Confirmed FM Decision",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Render Decision Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply Confirmed FM Decision": {
+      "main": [
+        [
+          {
+            "node": "Shape Decision Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shape Decision Result": {
+      "main": [
+        [
+          {
+            "node": "Render Decision Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approval Request Source": {
+      "main": [
+        [
+          {
+            "node": "WF2 Report Request?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF2 Report Request?": {
+      "main": [
+        [
+          {
+            "node": "Claim WF2 Review Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Validate Resend Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim WF2 Review Email": {
+      "main": [
+        [
+          {
+            "node": "New Email Claim?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF2 Email Result?": {
+      "main": [
+        [
+          {
+            "node": "Return WF2 Email Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Read Resend Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": {},
+  "pinData": {}
+}

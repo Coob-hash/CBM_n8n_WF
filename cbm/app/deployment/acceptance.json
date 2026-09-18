@@ -1,0 +1,17 @@
+{
+  "n8nVersion": null,
+  "instanceUrl": null,
+  "importTested": false,
+  "licenseConfirmationPending": true,
+  "requiredBeforeActivation": [
+    "Record exact n8n version and import every main/helper/error workflow; verify node types and rebind IDs.",
+    "Configure internal credential IDs, FM address, webhook host, Drive folders and service environment.",
+    "Verify pdf-parse 1.x and environment access in the n8n Code runner.",
+    "Run one ordinary and one urgent ticket through controlled test mailboxes and inspect response_result.",
+    "Run one production knowledge document through native loader, embeddings, RPC publication and failure notification.",
+    "Verify approval timeout sends renewed links without rework; reject and approve explicitly in separate submissions.",
+    "Verify report-only and report-plus-photo completion, IFC replay, and missing-element/failure notification.",
+    "Configure TLS and FM route IP restrictions or SSO.",
+    "Confirm intended license before external distribution; no remote branch was merged."
+  ]
+}

@@ -1,0 +1,387 @@
+{
+  "updatedAt": "2026-09-17T13:23:20.731Z",
+  "createdAt": "2026-09-15T19:10:22.629Z",
+  "id": "3sdjXyXedBKiDGXD",
+  "name": "[CBM Intake Approval 2026.09.15] CBM - WF2 Notify FM from Stored Result",
+  "description": null,
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "context"
+            }
+          ]
+        }
+      },
+      "name": "Bound Context",
+      "id": "75deab53-1a2d-4222-ae36-7e5b7e31d56d",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -16,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{json:JSON.parse($json.context)}];"
+      },
+      "name": "Parse Context",
+      "id": "96a9c90b-1321-417a-be70-68075280801a",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT r.* FROM jsonb_to_record(cbm_wf2_claim_notice($1::jsonb)) AS r\n (send_status text,ticket_id int,approval_id uuid,notice_key text,claim_id uuid,recipient text,ifc_new_version text,reason text,already_sent boolean);",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($json)] }}"
+        }
+      },
+      "name": "Claim Closure Notice",
+      "id": "2115ca56-cd49-45fe-9690-d837111c8f7c",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        432,
+        96
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cbmLocalPg20260917",
+          "name": "CBM Postgres - Local Demo"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.send_status === \"SEND\" }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Send Required?",
+      "id": "cbm-wf2-send-required",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        640,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.recipient }}",
+        "subject": "={{ \"[CBM] Ticket #\"+$json.ticket_id+($json.notice_key === \"technician:rework\" ? \" - rework required\" : \" - closed, IFC updated\") }}",
+        "emailType": "text",
+        "message": "={{ $json.notice_key === \"technician:rework\" ? \"Ticket #\"+$json.ticket_id+\": \"+$json.reason+\" Complete a revised report after the required work: \"+$json.report_url : \"Ticket #\"+$json.ticket_id+\" is closed following FM approval. IFC version: \"+$json.ifc_new_version }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "name": "Send Closure Notice",
+      "id": "6e78d277-9dc8-4591-9da8-55a19c62eacc",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        896,
+        0
+      ],
+      "retryOnFail": false,
+      "webhookId": "2b357197-a954-430c-8256-998afd724696",
+      "alwaysOutputData": true,
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "R5EQDxDzCMYdMH9U",
+          "name": "Gmail account 3"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Gmail output is the only source of a send receipt; the agent supplies none.\nconst claim = $('Claim Closure Notice').first().json;\nconst response = $input.first().json;\nconst sent = !response.error && typeof response.id === 'string' && response.id.trim().length > 0;\nreturn [{json:{ticket_id:claim.ticket_id,approval_id:claim.approval_id,\n  notice_key:claim.notice_key,claim_id:claim.claim_id,\n  send_status:sent?'SENT':'UNCONFIRMED',message_id:sent?response.id:null,\n  error:sent?null:String(response.error?.message||response.error||'Gmail returned no message ID; inspect the execution before retrying').slice(0,1000)}}];\n"
+      },
+      "name": "Validate Gmail Receipt",
+      "id": "cbm-wf2-gmail-receipt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT cbm_wf2_record_notice($1::jsonb) AS result;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($json)] }}"
+        }
+      },
+      "name": "Record Notice Result",
+      "id": "39ca7df8-b263-4524-9b3d-d4cfea883979",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1344,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cbmLocalPg20260917",
+          "name": "CBM Postgres - Local Demo"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "name": "Notice Result",
+      "id": "cbm-wf2-notice-result",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1584,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT CASE WHEN $1::integer IS NOT NULL THEN cbm_issue_technician_report_link($1::integer) ELSE NULL END AS report_link;",
+        "options": {
+          "queryReplacement": "={{ [$(\"Claim Closure Notice\").first().json.notice_key === \"technician:rework\" ? $(\"Claim Closure Notice\").first().json.ticket_id : null] }}"
+        }
+      },
+      "id": "a12731c980400b9e20aca83ce145fb21",
+      "name": "Prepare Technician Report Link",
+      "type": "n8n-nodes-base.postgres",
+      "position": [
+        704,
+        384
+      ],
+      "typeVersion": 2.6,
+      "credentials": {
+        "postgres": {
+          "id": "cbmLocalPg20260917",
+          "name": "CBM Postgres - Local Demo"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const d=$('Claim Closure Notice').first().json,link=$json.report_link;\n if(d.notice_key==='technician:rework'&&!link?.token)throw new Error('Cannot issue a revised report link');\n return [{json:{...d,report_url:link?.token?\"https://bonanza-progress-hangover.ngrok-free.dev/webhook/cbm-technician-report\"+'?ticketId='+link.ticketId+'&token='+encodeURIComponent(link.token):null}}];"
+      },
+      "id": "9261fa85b27f654e8231246e791c0329",
+      "name": "Attach Technician Report Link",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        1056,
+        384
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "content": "#  WF2 Notify FM from Stored Result\n\n## Purpose: Send FM or technician closure/rework notifications.\n\nNodes and logic:\n1. Bound Context → Parse Context — receive ticket, approval and recipient role.\n2. Claim Closure Notice → Send Required? — verify the ticket state and prevent duplicate sending.\n3. Send Closure Notice → Validate Gmail Receipt — send and check Gmail’s response.\n4. Record Notice Result → Notice Result — persist and return the outcome.\n\nIf sending is unnecessary or blocked, the workflow goes directly to Notice Result.\n\n## Result: A recorded notification outcome for the Closure Supervisor.",
+        "height": 976,
+        "width": 1920,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -160,
+        -336
+      ],
+      "typeVersion": 1,
+      "id": "f2f7c09f-2580-4318-b094-380e37175a80",
+      "name": "Sticky Note"
+    }
+  ],
+  "connections": {
+    "Bound Context": {
+      "main": [
+        [
+          {
+            "node": "Parse Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Context": {
+      "main": [
+        [
+          {
+            "node": "Claim Closure Notice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim Closure Notice": {
+      "main": [
+        [
+          {
+            "node": "Send Required?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Required?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Technician Report Link",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notice Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Closure Notice": {
+      "main": [
+        [
+          {
+            "node": "Validate Gmail Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Gmail Receipt": {
+      "main": [
+        [
+          {
+            "node": "Record Notice Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Notice Result": {
+      "main": [
+        [
+          {
+            "node": "Notice Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Technician Report Link": {
+      "main": [
+        [
+          {
+            "node": "Attach Technician Report Link",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach Technician Report Link": {
+      "main": [
+        [
+          {
+            "node": "Send Closure Notice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": null,
+  "nodeGroups": [],
+  "pinData": {},
+  "versionId": "e7eee8cb-efbe-433f-8dfc-b882e9321be2",
+  "activeVersionId": null,
+  "versionCounter": 19,
+  "triggerCount": 0,
+  "sourceWorkflowId": null,
+  "tags": [
+    {
+      "updatedAt": "2026-09-15T21:10:56.246Z",
+      "createdAt": "2026-09-15T21:10:56.246Z",
+      "id": "v2sLLqn4il2Xqsue",
+      "name": "pending_configuration"
+    },
+    {
+      "updatedAt": "2026-09-15T21:10:32.436Z",
+      "createdAt": "2026-09-15T21:10:32.436Z",
+      "id": "w4qGud2amljqy8CE",
+      "name": "notify_fm.json"
+    }
+  ],
+  "shared": [
+    {
+      "updatedAt": "2026-09-15T21:10:22.630Z",
+      "createdAt": "2026-09-15T21:10:22.630Z",
+      "role": "workflow:owner",
+      "workflowId": "3sdjXyXedBKiDGXD",
+      "projectId": "MbDNXY6kRG3NS2YO",
+      "project": {
+        "updatedAt": "2026-06-08T13:02:38.493Z",
+        "createdAt": "2026-06-08T12:54:16.212Z",
+        "id": "MbDNXY6kRG3NS2YO",
+        "name": "Giuseppe Desiderio <giuseppe.desiderio@polito.it>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "customTelemetryTags": [],
+        "creatorId": "9e453420-3eba-485f-bf70-3fb1da70cbd5"
+      }
+    }
+  ],
+  "versionMetadata": {
+    "name": null,
+    "description": null
+  }
+}

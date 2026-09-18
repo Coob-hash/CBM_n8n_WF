@@ -1,0 +1,61 @@
+{
+  "name": "[CBM Intake Approval 2026.09.15] CBM - Knowledge Error Notification",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "939b4512696404b9d1e800e3d0580d17",
+      "name": "Knowledge Error",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "sendTo": "fm@test.invalid",
+        "emailType": "text",
+        "subject": "[CBM] Technical knowledge synchronization failed",
+        "message": "={{ \"Workflow: \" + ($json.workflow?.name || \"knowledge sync\") + \"\\nExecution: \" + ($json.execution?.url || $json.execution?.id || \"unavailable\") + \"\\nError: \" + ($json.execution?.error?.message || $json.trigger?.error?.message || \"Inspect n8n execution\") + \"\\nThe last published generation remains available within its freshness policy. Inspect loader serialization, provider limits and snapshot consistency before retrying.\" }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "98d559383fc01b39d9af269c20b6e055",
+      "name": "Notify Knowledge Operator",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        240,
+        0
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "REPLACE_GMAIL_CREDENTIAL_ID",
+          "name": "CBM Gmail"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Knowledge Error": {
+      "main": [
+        [
+          {
+            "node": "Notify Knowledge Operator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Rome"
+  },
+  "id": "cbmIntake2026091505",
+  "active": false
+}

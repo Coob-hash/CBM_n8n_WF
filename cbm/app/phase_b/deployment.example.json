@@ -1,0 +1,33 @@
+{
+  "fmEmail": "gruppo1isteagiovani@gmail.com",
+  "callbackBase": "https://bonanza-progress-hangover.ngrok-free.dev/webhook",
+  "model": "claude-sonnet-4-6",
+  "thinkingMode": "adaptive",
+  "effort": "high",
+  "postgresCredentialId": "cbmLocalPg20260917",
+  "postgresCredentialName": "CBM Postgres - Local Demo",
+  "gmailCredentialId": "R5EQDxDzCMYdMH9U",
+  "gmailCredentialName": "Gmail account 3",
+  "anthropicCredentialId": "rj0J6fDoCBVNb7d1",
+  "anthropicCredentialName": "Anthropic account",
+  "knowledge": {
+    "supabaseCredentialId": "vwpdbfFtXMR4D7Nh",
+    "supabaseCredentialName": "Supabase account 3",
+    "postgresCredentialId": "cbmSupabasePgIsteaGroup1",
+    "postgresCredentialName": "CBM Supabase Postgres - ISTEA_Group1",
+    "openaiCredentialId": "f0y7IjBcxpOEn1zU",
+    "openaiCredentialName": "OpenAI account",
+    "snapshotUrl": "http://knowledge-service:8001/knowledge/snapshot",
+    "sourceCredentialId": "cbmKnowledgeHeader20260917",
+    "sourceCredentialName": "CBM Knowledge Service Header"
+  },
+  "workflowIds": {
+    "initialize": "F6Jy5Oj83kbFMQCZ",
+    "offer_next": "xgjzRT6ZUx2Q9J1q",
+    "send_notices": "LkgsXHySuUApNjKw",
+    "process_events": "feYC6MDEkiKT1vFJ",
+    "escalate": "Jtp8qKAXoahQPibf",
+    "ack": "r9dppIDsv4K3EBzo",
+    "failure": "aFLHB2kJNkSJ7Rig"
+  }
+}
