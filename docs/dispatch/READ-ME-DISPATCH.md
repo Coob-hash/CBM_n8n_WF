@@ -97,7 +97,7 @@ The historical isolated PostgreSQL and n8n tests below remain relevant to the qu
 - Real n8n 2.29.9: five self-called children ran; the intentionally failing third child did not prevent children four and five from completing.
 - All 14 installed inactive workflows were read back and matched the prepared nodes/connections. The live CBM ticket count remained zero before and after the update.
 
-Evidence is in [validation](../../validation). Backups include `before-workflows/`, `before-deployment-files/` and `before-dispatch-database.dump`. The installation script is [scripts/dispatch/Install-DispatchQueueUpdate.ps1](../../scripts/dispatch/Install-DispatchQueueUpdate.ps1). Re-import a specific backed-up workflow by its existing ID to restore its draft; restore the database dump only if intentionally reverting the database as a whole.
+Evidence is in [validation](../../validation). Backups include `before-workflows/`, `before-deployment-files/` and `before-dispatch-database.dump`. The one-off installation script, `Install-DispatchQueueUpdate.ps1`, has been removed: later updates replaced its workflow snapshots, and `scripts/deployment/Apply-CbmIntakeMigration.ps1` now applies its queue and context SQL. Re-import a specific backed-up workflow by its existing ID to restore its draft; restore the database dump only if intentionally reverting the database as a whole.
 
 The queue claim expires after 65 minutes and is renewed when its worker starts; WF1 has a 60-minute execution timeout. Normal and handled-failure paths release claims immediately. A crash before release is recovered after expiry. This protects overlapping selection; existing optimistic database updates and email claims still protect mutations and sends.
 

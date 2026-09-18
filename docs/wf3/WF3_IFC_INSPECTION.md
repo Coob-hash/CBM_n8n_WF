@@ -48,7 +48,7 @@ and any truncation is marked.
 The current demo has one maintained radiator, GlobalId `3kcZF9AH16IwPfuL_CGFlR`,
 ticket #1, work **Sostituzione Valvola**, in `office_v2.ifc`.
 
-`scripts/wf3/Install-Wf3IfcInspection.ps1` deploys the Python service, imports the helper before
+`scripts/wf3/Install-Wf3Actions.ps1` deploys the Python service, imports the helper before
 WF3, and synchronizes the source and configured exports. Both retain their inactive
 state. A helper invoked by another workflow does not need a schedule.
 

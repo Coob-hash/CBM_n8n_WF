@@ -155,7 +155,7 @@ C:\Users\USER\Desktop\n8n_deploy\
   Dockerfile                   pinned n8n image
   scripts\
     deployment\                Start-Cbm (backed-up build/start), Cbm-Compose (Compose wrapper), Test-Cbm (checks)
-    workflows\                 Prepare-CbmWorkflows (14 inactive demo exports), Apply-CbmCompatibility
+    workflows\                 Prepare-CbmWorkflows (inactive demo exports)
     demo\                      Set-CbmDemoTechnicians (controlled recipients), Prepare-CaseStudyPhotos
   database\                    SQL mounted into cbm-postgres on first start
   docs\                        guides and per-workflow notes
@@ -679,10 +679,9 @@ The nested `n8n_test/Nuova cartella` files are not a rollback of the verified 2.
 
 ### 11.4 Rebuilding application exports
 
-The original release's builders and 395-check offline suite remain available in the preserved release. Running those builders in the deployment copy regenerates baseline templates, including the old WF2 PDF node. After any such rebuild, run:
+The workflow exports in `cbm/app/` are the reviewed, current sources. Do not rerun the original release's builders over them: they regenerate baseline templates, including the old WF2 PDF node, and the overlay script that once patched those templates (`Apply-CbmCompatibility.ps1`) has been removed because it no longer matches the current WF2. To refresh the deployment copies, run:
 
 ```powershell
-.\scripts\workflows\Apply-CbmCompatibility.ps1
 .\scripts\workflows\Prepare-CbmWorkflows.ps1
 ```
 
