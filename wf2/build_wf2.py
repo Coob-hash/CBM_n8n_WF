@@ -33,18 +33,26 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+with open(os.path.join(ROOT, "runtime-bindings.json"), encoding="utf-8") as bindings_file:
+    BINDINGS = json.load(bindings_file)
+def credential(key):
+    ref = BINDINGS["credentials"].get(key)
+    if not ref or not ref.get("id"):
+        raise ValueError("Missing n8n credential binding: " + key + "; configure cbm/app/runtime-bindings.json")
+    return dict(ref)
 WF2 = os.path.join(ROOT, "n8n_wf2_completion_approval_ifc_update.json")
 TESTS = os.path.join(ROOT, "phase_b", "test-dispatch.js")
 
 ATTEMPT_BUDGET = 3
 IFC_SERVICE = "http://ifc-service:8000"
-PG_CRED = {"postgres": {"id": "REPLACE_POSTGRES_CREDENTIAL_ID", "name": "CBM Postgres"}}
-GMAIL_CRED = {"gmailOAuth2": {"id": "REPLACE_GMAIL_CREDENTIAL_ID", "name": "CBM Gmail"}}
-ANTHROPIC_CRED = {"anthropicApi": {"id": "REPLACE_ANTHROPIC_CREDENTIAL_ID", "name": "CBM Anthropic"}}
-DRIVE_CRED = {"googleDriveOAuth2Api": {"id": "REPLACE_DRIVE_CRED_ID", "name": "CBM Google Drive"}}
-FM_EMAIL = "facility.manager@example.com"
+PG_CRED = {"postgres": credential("ticketPostgres")}
+GMAIL_CRED = {"gmailOAuth2": credential("gmail")}
+ANTHROPIC_CRED = {"anthropicApi": credential("anthropic")}
+DRIVE_CRED = {"googleDriveOAuth2Api": credential("drive")}
+FM_EMAIL = BINDINGS["fmEmail"]
 
 # Statuses the chain is allowed to propose. Validated in code, never trusted raw.
 ALLOWED_STATUS = ["PENDING_APPROVAL", "REWORK", "NEEDS_TRIAGE"]
@@ -455,7 +463,7 @@ def main():
             "queryString": "=TICKET-{{ $('Extract Ticket ID').first().json.ticket_id }}",
             "filter": {
                 "folderId": {"__rl": True, "mode": "id",
-                             "value": "REPLACE_WITH_COMPLETED_FOLDER_ID"},
+                             "value": BINDINGS["completedFolderId"]},
                 "whatToSearch": "files",
                 "fileTypes": ["application/vnd.google-apps.photo", "image/jpeg", "image/png"],
             },
@@ -752,8 +760,24 @@ def main():
             n["parameters"] = json.loads(json.dumps(n["parameters"]).replace(
                 "$('Parse Verification')", "$('Parse Completion Assessment')"))
 
+    from review_fixes import apply_review_fixes
+    apply_review_fixes(wf)
     out = serialize(wf)
     open(WF2, "wb").write(out)
+    # Keep regenerated workflows on the single-PDF submission contract.
+    subprocess.run(['node', os.path.join(ROOT, 'wf2', 'apply-report-submission.cjs'), WF2], check=True)
+    subprocess.run(['node', os.path.join(ROOT, 'wf2', 'apply-strict-closure.cjs'), WF2,
+                    os.path.join(ROOT, 'wf2', 'workflows', 'log_ifc_maintenance.json'),
+                    os.path.join(ROOT, 'wf2', 'workflows', 'notify_fm.json')], check=True)
+    subprocess.run(['node', os.path.join(ROOT, 'technician_portal', 'apply.cjs')], check=True)
+    # Keep the generated workflow on the shared email/chat approval contract.
+    # This transformation is idempotent and must run after the legacy overlays,
+    # which still create the old Gmail send-and-wait branch.
+    from shared_review import extend_wf2
+    with open(WF2, encoding='utf-8-sig') as generated:
+        shared = extend_wf2(json.load(generated))
+    open(WF2, 'wb').write(serialize(shared))
+    out = open(WF2, 'rb').read()
     after = hashlib.sha256(out).hexdigest().upper()
 
     # ---- 5. re-pin -------------------------------------------------------

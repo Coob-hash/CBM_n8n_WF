@@ -1,7 +1,6 @@
 {
-  "id": "070c0110e6dd22489e332b73772d2c1f",
+  "id": "ZvjWnuW4lN0EFTdI",
   "name": "CBM - Synchronize IFC Technical Knowledge",
-  "active": false,
   "nodes": [
     {
       "parameters": {
@@ -14,42 +13,41 @@
           ]
         }
       },
-      "id": "b147cbd486ac211028446a124ed29e53",
+      "id": "7f01df83-08c0-4cac-a544-579e32316817",
       "name": "Every Minute",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [
-        0,
-        0
+        -1760,
+        80
       ]
     },
     {
       "parameters": {
-        "method": "GET",
-        "url": "http://127.0.0.1:8001/knowledge/snapshot",
+        "url": "http://knowledge-service:8001/knowledge/snapshot",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "options": {
-          "timeout": 60000,
           "response": {
             "response": {
               "responseFormat": "json"
             }
-          }
+          },
+          "timeout": 60000
         }
       },
-      "id": "df4675f0ff9e5cd50246819903bf6969",
+      "id": "e00da06f-a7c0-4577-8cf5-f86699dd445d",
       "name": "Read Approved IFC Sources",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        220,
-        0
+        -1536,
+        80
       ],
       "credentials": {
         "httpHeaderAuth": {
-          "id": "REPLACE_KNOWLEDGE_HEADER_CREDENTIAL_ID",
-          "name": "CBM Knowledge Source Header"
+          "id": "cbmKnowledgeHeader20260917",
+          "name": "CBM Knowledge Service Header"
         }
       }
     },
@@ -58,22 +56,22 @@
         "operation": "executeQuery",
         "query": "SELECT public.cbm_begin_knowledge($1::jsonb) AS build;",
         "options": {
-          "queryReplacement": "={{ [JSON.stringify($json)] }}",
-          "queryBatching": "single"
+          "queryBatching": "single",
+          "queryReplacement": "={{ [JSON.stringify($json)] }}"
         }
       },
-      "id": "775a980c1045827ac4a7018a0a93dc42",
+      "id": "f4a427fa-fe1f-4329-9142-6fdea675f8c2",
       "name": "Begin Knowledge Generation",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        440,
-        0
+        -1328,
+        80
       ],
       "credentials": {
         "postgres": {
-          "id": "REPLACE_SUPABASE_POSTGRES_CREDENTIAL_ID",
-          "name": "CBM Supabase Postgres"
+          "id": "cbmSupabasePgIsteaGroup1",
+          "name": "CBM Supabase Postgres - ISTEA_Group1"
         }
       }
     },
@@ -83,7 +81,8 @@
           "options": {
             "caseSensitive": true,
             "leftValue": "",
-            "typeValidation": "strict"
+            "typeValidation": "strict",
+            "version": 1
           },
           "conditions": [
             {
@@ -101,13 +100,13 @@
         },
         "options": {}
       },
-      "id": "c9a83114f5728e98982e3503cb3fb05f",
+      "id": "15554354-4f93-4e4f-93bb-b544e20fc08b",
       "name": "Build Required?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        660,
-        0
+        -1104,
+        80
       ]
     },
     {
@@ -116,7 +115,8 @@
           "options": {
             "caseSensitive": true,
             "leftValue": "",
-            "typeValidation": "strict"
+            "typeValidation": "strict",
+            "version": 1
           },
           "conditions": [
             {
@@ -134,40 +134,39 @@
         },
         "options": {}
       },
-      "id": "d15d16808a3e29ae0d9ecf3842e9750a",
+      "id": "2e52d886-7492-4d59-8614-01bbcf968c5e",
       "name": "Embedding Needed?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        880,
-        0
+        -880,
+        80
       ]
     },
     {
       "parameters": {
         "jsCode": "return $json.build.documents.map(json=>({json}));"
       },
-      "id": "31e613ac39810d3c85eef9120844a124",
+      "id": "ec5a96d5-c2cf-48d7-80d6-4d4103e05473",
       "name": "Documents To Items",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1100,
-        0
+        -656,
+        80
       ]
     },
     {
       "parameters": {
-        "batchSize": 1,
         "options": {}
       },
-      "id": "27da246a51401df7d5eb0e824ba5967c",
+      "id": "57bccbec-eec5-41ad-8a01-5d77d300d918",
       "name": "One Document At A Time",
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        1320,
-        0
+        -448,
+        80
       ]
     },
     {
@@ -180,44 +179,43 @@
         },
         "options": {}
       },
-      "id": "bae17b180f598a12bfeb4280de6b3696",
+      "id": "4106fd22-2184-453f-9343-67caf3619cb7",
       "name": "Supabase - Insert Document",
       "type": "@n8n/n8n-nodes-langchain.vectorStoreSupabase",
       "typeVersion": 1.3,
       "position": [
-        1540,
-        180
+        -224,
+        272
       ],
       "credentials": {
         "supabaseApi": {
-          "id": "REPLACE_SUPABASE_CREDENTIAL_ID",
-          "name": "CBM Supabase Knowledge"
+          "id": "vwpdbfFtXMR4D7Nh",
+          "name": "Supabase account 3"
         }
       }
     },
     {
       "parameters": {
-        "model": "text-embedding-3-small",
-        "options": {}
+        "options": {},
+        "model": "text-embedding-3-small"
       },
-      "id": "8577c76b848f0bcc9d96b93e8c02416f",
+      "id": "c32bca2c-d098-4f1f-ab5b-561b3fcabc0f",
       "name": "OpenAI Embeddings - Ingestion",
       "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
       "typeVersion": 1.2,
       "position": [
-        1440,
-        440
+        -320,
+        528
       ],
       "credentials": {
         "openAiApi": {
-          "id": "REPLACE_OPENAI_CREDENTIAL_ID",
-          "name": "CBM OpenAI Embeddings"
+          "id": "f0y7IjBcxpOEn1zU",
+          "name": "OpenAI account"
         }
       }
     },
     {
       "parameters": {
-        "dataType": "json",
         "jsonMode": "expressionData",
         "jsonData": "={{ $json.content }}",
         "textSplittingMode": "custom",
@@ -280,57 +278,55 @@
           }
         }
       },
-      "id": "5b89973fa415862afdde0d6d3d16487d",
+      "id": "829b7fec-2c35-44fd-bb88-316aca8e0686",
       "name": "Approved Document Loader",
       "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
       "typeVersion": 1.1,
       "position": [
-        1700,
-        440
+        -64,
+        528
       ]
     },
     {
       "parameters": {
         "chunkSize": 2000,
-        "chunkOverlap": 0,
         "options": {}
       },
-      "id": "43a52e9d66a3f01fe510f21df0721509",
+      "id": "3cd6ded5-e618-41df-936a-654a04af3f87",
       "name": "Preserve Source Chunk",
       "type": "@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter",
       "typeVersion": 1,
       "position": [
-        1840,
-        660
+        80,
+        752
       ]
     },
     {
       "parameters": {
-        "method": "GET",
-        "url": "http://127.0.0.1:8001/knowledge/snapshot",
+        "url": "http://knowledge-service:8001/knowledge/snapshot",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "options": {
-          "timeout": 60000,
           "response": {
             "response": {
               "responseFormat": "json"
             }
-          }
+          },
+          "timeout": 60000
         }
       },
-      "id": "69edbc7bb11c02fd1984de6cefd76ab2",
+      "id": "b8e7627c-b503-4101-ab3a-73220bef6d87",
       "name": "Recheck Source Snapshot",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1760,
-        -80
+        0,
+        0
       ],
       "credentials": {
         "httpHeaderAuth": {
-          "id": "REPLACE_KNOWLEDGE_HEADER_CREDENTIAL_ID",
-          "name": "CBM Knowledge Source Header"
+          "id": "cbmKnowledgeHeader20260917",
+          "name": "CBM Knowledge Service Header"
         }
       }
     },
@@ -339,22 +335,22 @@
         "operation": "executeQuery",
         "query": "SELECT public.cbm_publish_knowledge($1::uuid,$2::text) AS publication;",
         "options": {
-          "queryReplacement": "={{ [$(\"Begin Knowledge Generation\").first().json.build.generation,$json.fingerprint] }}",
-          "queryBatching": "single"
+          "queryBatching": "single",
+          "queryReplacement": "={{ [$(\"Begin Knowledge Generation\").first().json.build.generation,$json.fingerprint] }}"
         }
       },
-      "id": "ba41cea12e17037e950c5ff22df63338",
+      "id": "9735e1fc-132c-4420-9b1b-1585cd56ccaa",
       "name": "Publish Complete Generation",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1980,
-        -80
+        224,
+        0
       ],
       "credentials": {
         "postgres": {
-          "id": "REPLACE_SUPABASE_POSTGRES_CREDENTIAL_ID",
-          "name": "CBM Supabase Postgres"
+          "id": "cbmSupabasePgIsteaGroup1",
+          "name": "CBM Supabase Postgres - ISTEA_Group1"
         }
       }
     }
@@ -509,7 +505,13 @@
   },
   "settings": {
     "executionOrder": "v1",
-    "timezone": "Europe/Rome",
-    "executionTimeout": 300
-  }
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "errorWorkflow": "NfWWu5n2L5vYXXav"
+  },
+  "pinData": {},
+  "staticData": null,
+  "meta": null,
+  "nodeGroups": [],
+  "active": 0
 }

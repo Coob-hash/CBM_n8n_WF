@@ -10,7 +10,7 @@ import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-WF2 = os.path.join(ROOT, "n8n_wf2_completion_approval_ifc_update.json")
+WF2 = sys.argv[1] if len(sys.argv)>1 else os.path.join(ROOT, "n8n_wf2_completion_approval_ifc_update.json")
 
 wf = json.load(open(WF2, encoding="utf-8"))
 names = {n["name"] for n in wf["nodes"]}
@@ -62,7 +62,7 @@ while stack:
             stack.append(e["node"])
 aux = {n["name"] for n in wf["nodes"]
        if n["type"].endswith(("stickyNote",)) or "Tool" in n["type"]
-       or n["type"].endswith("lmChatAnthropic")}
+       or '.lmChat' in n["type"] or n["type"].endswith("toolWorkflow")}
 unreachable = names - seen - aux
 check("every main-flow node is reachable from the trigger", not unreachable,
       "unreachable: " + ", ".join(sorted(unreachable)))
@@ -80,10 +80,10 @@ check("no tool executes free-form SQL",
           "queryReplacement" in json.dumps(by_name[t].get("parameters", {})) or
           by_name[t]["type"] != "n8n-nodes-base.postgresTool" for t in tools))
 
-# 5. both chain nodes share the model
-chain_targets = [e["node"] for br in conns.get("Anthropic Chat Model", {}).get("ai_languageModel", [])
-                 for e in br or []]
-check("both LLM chains are attached to a model", len(chain_targets) == 2, str(chain_targets))
+# 5. Each reachable chain has a model; vision and assessment may use different providers.
+chains = {n['name'] for n in wf['nodes'] if n['type'].endswith('.chainLlm') and n['name'] in seen}
+chain_targets = [e['node'] for spec in conns.values() for br in spec.get('ai_languageModel',[]) for e in br or []]
+check("both LLM chains are attached to a model", len(chains)==2 and all(chain_targets.count(n)==1 for n in chains), str(chain_targets))
 
 # 6. the replaced chain is gone
 gone = ["IFC Service - Log Maintenance", "Close Ticket", "Update Technician Stats",
@@ -96,17 +96,20 @@ check("the seven replaced closure nodes are removed", not (names & set(gone)),
 sys_msg = by_name[AGENT]["parameters"]["options"]["systemMessage"]
 check("attempt budget of 3 is stated to the supervisor", "at most 3 times" in sys_msg)
 check("closure context binds attemptBudget 3",
-      "attemptBudget: 3" in by_name["Closure Context"]["parameters"]["jsCode"])
+      bool(re.search(r"attemptBudget:\s*3", by_name["Closure Context"]["parameters"]["jsCode"])))
 
 # 8. verification is independent of the agent's own claim
 check("closure is verified from committed database state",
       "SELECT" in by_name["Verify Closure Outcome"]["parameters"]["query"]
       and conns["Closure Supervisor"]["main"][0][0]["node"] == "Verify Closure Outcome")
 
-# 9. both approval branches reach the supervisor
-fm = conns["FM Approved?"]["main"]
-check("both FM branches reach the closure supervisor",
-      len(fm) == 2 and all(br and br[0]["node"] == "Closure Context" for br in fm))
+# 9. email and chat share committed decisions; settled work bypasses the agent.
+check("approval waits on the database instead of a private email callback",
+      'FM Approval (Email + Wait)' not in names and
+      conns['Wait for FM Decision']['main'][0][0]['node']=='Read FM Review State')
+check("settled decisions bypass the supervisor",
+      conns['Closure Already Handled?']['main'][0][0]['node']=='Verify Closure Outcome' and
+      conns['Closure Already Handled?']['main'][1][0]['node']=='Closure Supervisor')
 
-print("\n{}/{} checks passed".format(9 + 5 - len(failures), 9 + 5))
+print("\nStructural validation " + ('FAILED' if failures else 'passed'))
 sys.exit(1 if failures else 0)

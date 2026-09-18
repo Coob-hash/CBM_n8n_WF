@@ -132,7 +132,7 @@ def extract_snapshot(catalog_path: Path, model_dir: Path, open_model=None, get_p
             text = f"{prop.get('label', prop['name'])}: {value} {prop.get('unit', '')}".strip()
             add(asset, product, "ifc:" + prop["pset"] + "." + prop["name"],
                 "IFC property " + prop["pset"] + "." + prop["name"],
-                model_path.name, "IFC", text, model_hash)
+                sha(canonical([gid, prop["pset"], prop["name"], text])), "IFC", text, model_hash)
         for (pid, _), (doc, pages, digest) in documents.items():
             if pid != product["id"]:
                 continue

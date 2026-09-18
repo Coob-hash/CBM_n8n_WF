@@ -1,0 +1,532 @@
+{
+  "id": "cbmTechnicianPortal20260917",
+  "name": "[CBM OpenRouter Vision 2026.09.16] CBM - Technician Report Portal",
+  "active": false,
+  "nodes": [
+    {
+      "id": "386710d551aa0a2a0fa23597dafdcf12",
+      "name": "Technician Report Page",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "cbm-technician-report",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "webhookId": "8128cc7291fccc76e3024302289a3ca7"
+    },
+    {
+      "id": "8a5c1d0b294970d208980507db7b34f3",
+      "name": "Validate Report Link",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        240,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT cbm_technician_report_access($1::jsonb) AS context;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify({ticketId:$json.query?.ticketId,token:$json.query?.token})] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "cbmLocalPg20260917",
+          "name": "CBM Postgres - Local Demo"
+        }
+      }
+    },
+    {
+      "id": "f806f99a955e96b4a807735575696cd3",
+      "name": "Build Technician Page",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const access=$json.context;\nconst esc=v=>String(v??'').replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c]));\nif(access.status!=='OK'){\n const messages={SUBMITTED:'Rapporto già inviato / Report already submitted.',UNCONFIRMED:'Invio da verificare. Contatta il FM prima di riprovare / Submission requires verification. Contact the FM before retrying.',NOT_OPEN:'Il ticket non accetta un nuovo rapporto / This ticket is not accepting another report.'};\n return [{json:{httpCode:access.status==='SUBMITTED'?200:403,html:'<!doctype html><html lang=\"it\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>CBM report</title><body style=\"font:18px system-ui;max-width:700px;margin:60px auto;padding:24px\"><h1>Rapporto tecnico / Technician report</h1><p>'+esc(messages[access.status]||'Link non valido o scaduto / Invalid or expired link. Request a new link from the FM.')+'</p></body></html>'}}];\n}\nconst base=String($env.IFC_SERVICE_URL||'').replace(/\\/+$/,'');\nconst template=await this.helpers.httpRequest({method:'GET',url:base+'/reports/template',json:true,timeout:15000});\nconst auth=$('Technician Report Page').first().json.query;\nconst context={fields:access.fields,ticketId:access.ticketId,token:auth.token,submitUrl:'https://bonanza-progress-hangover.ngrok-free.dev/webhook/cbm-technician-report'};\nreturn [{json:{httpCode:200,html:template.html.replace('<!-- CBM_BOUND_CONTEXT -->','<script id=\"cbm-bound-context\" type=\"application/json\">'+JSON.stringify(context).replace(/</g,'\\\\u003c')+'</script>')}}];\n"
+      }
+    },
+    {
+      "id": "faa70860f80576f225729ccb5c9853cc",
+      "name": "Show Technician Page",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        720,
+        0
+      ],
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseCode": "={{ $json.httpCode }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Cache-Control",
+                "value": "no-store"
+              },
+              {
+                "name": "Referrer-Policy",
+                "value": "no-referrer"
+              },
+              {
+                "name": "X-Content-Type-Options",
+                "value": "nosniff"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "e321559f5417c4de2c51db515760d220",
+      "name": "Submit Technician Report",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        450
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "cbm-technician-report",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "webhookId": "0be19d359281a15ae0982a2aa2dd144d"
+    },
+    {
+      "id": "45a61b18d96f61e6ec4b26ade92fe92a",
+      "name": "Validate Submission Access",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        240,
+        450
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT cbm_technician_report_access($1::jsonb) AS context;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify({ticketId:$json.body?.ticketId,token:$json.body?.token})] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "cbmLocalPg20260917",
+          "name": "CBM Postgres - Local Demo"
+        }
+      }
+    },
+    {
+      "id": "3a01f56961d2ac864dd5d312cf1d09e7",
+      "name": "Prepare Report PDF",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        450
+      ],
+      "parameters": {
+        "jsCode": "const access=$json.context;\nif(access.status!=='OK')return [{json:{result:access}}];\ntry{\n const body=$('Submit Technician Report').first().json.body;\n const report=JSON.parse(String(body.report||''));\n const limits={findings:[1,3000],work_performed:[20,6000],materials:[0,2000],checks:[1,4000],remaining_issues:[1,4000],photo_caption:[0,500]};\n for(const [key,[min,max]] of Object.entries(limits)){\n  if(typeof (report[key]??'')!=='string')throw new Error('Invalid '+key);\n  report[key]=String(report[key]||'').trim();if(report[key].length<min||report[key].length>max)throw new Error('Check '+key);\n }\n if(report.declaration!==true||!['PASSED','FAILED','NOT_PERFORMED'].includes(report.check_result)||!['COMPLETED','PARTIAL','NOT_COMPLETED'].includes(report.outcome)||!/^\\d{4}-\\d{2}-\\d{2}$/.test(report.work_date))throw new Error('Complete the date, results and confirmation');\n for(const [key,value] of Object.entries(access.fields))if(String(report[key]??'')!==String(value??''))throw new Error('Ticket details changed. Reopen the assigned link.');\n if(typeof body.pdfB64!=='string'||body.pdfB64.length>12*1024*1024||!/^[A-Za-z0-9+/]+={0,2}$/.test(body.pdfB64))throw new Error('Invalid report PDF');\n const buf=Buffer.from(body.pdfB64,'base64');\n if(buf.length>8*1024*1024||buf.subarray(0,5).toString()!=='%PDF-')throw new Error('Report must be a PDF up to 8 MiB');\n const base=String($env.IFC_SERVICE_URL||'').replace(/\\/+$/,'');\n const parsed=await this.helpers.httpRequest({method:'POST',url:base+'/reports/extract',json:true,body:{pdfB64:body.pdfB64},timeout:60000});\n const normalize=v=>String(v||'').normalize('NFC').replace(/\\s+/g,' ').trim();\n for(const key of ['technician_name','technician_email','reported_issue','work_performed','checks'])if(!normalize(parsed.text).includes(normalize(report[key])))throw new Error('PDF does not match the form. Generate it again.');\n if(report.photoSupplied===true&&(parsed.photo_status!=='OK'||!report.photo_caption))throw new Error('The intervention photo could not be read. Select it again.');\n const safe={schema_version:'1.0',...access.fields,work_date:report.work_date,check_result:report.check_result,outcome:report.outcome,declaration:true,photoSupplied:report.photoSupplied===true};\n for(const key of Object.keys(limits))safe[key]=report[key];\n const request={ticketId:access.ticketId,token:body.token,pdf_sha256:require('crypto').createHash('sha256').update(buf).digest('hex'),report:safe};\n return [{json:{valid:true,request},binary:{data:await this.helpers.prepareBinaryData(buf,'TICKET-'+access.ticketId+'.pdf','application/pdf')}}];\n}catch(e){return [{json:{valid:false,result:{status:'INVALID',detail:String(e.message||e).slice(0,240)}}}];}\n"
+      }
+    },
+    {
+      "id": "918c1505545d2d3caf51beee6e9ea00f",
+      "name": "Report Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        720,
+        450
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.valid === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e462da5059a5c542e24e60ef21046e6c",
+      "name": "Claim Report Upload",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        960,
+        400
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT cbm_claim_technician_report($1::jsonb) AS result;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($json.request)] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "cbmLocalPg20260917",
+          "name": "CBM Postgres - Local Demo"
+        }
+      }
+    },
+    {
+      "id": "27c76afd17167b604d6dca203cb6c947",
+      "name": "Upload Claimed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        400
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.result.status === \"UPLOAD\" }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "86c750d1425edd5b901eaf3bdcd22537",
+      "name": "Restore Report Binary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        350
+      ],
+      "parameters": {
+        "jsCode": "return [{json:$json,binary:$('Prepare Report PDF').first().binary}];"
+      }
+    },
+    {
+      "id": "ef5706be0dd59588b694f88eede5dd59",
+      "name": "Upload Report to Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1680,
+        350
+      ],
+      "parameters": {
+        "resource": "file",
+        "operation": "upload",
+        "inputDataFieldName": "data",
+        "name": "={{ \"TICKET-\"+$json.result.ticketId+\".pdf\" }}",
+        "driveId": {
+          "__rl": true,
+          "value": "My Drive",
+          "mode": "list",
+          "cachedResultName": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "1M0uJMr10KQBJPDp6aua1cgkOwXqWbmeC",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "MZz9FdxIgYiIyTjp",
+          "name": "Google Drive account 2"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true,
+      "retryOnFail": false
+    },
+    {
+      "id": "b825d14cb44f764c05fce36bf0dd9601",
+      "name": "Record Report Upload",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1920,
+        350
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT cbm_record_technician_report($1::jsonb) AS result;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify({submissionId:$(\"Claim Report Upload\").first().json.result.submissionId,fileId:(!$json.error && typeof $json.id === \"string\")?$json.id:null})] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "cbmLocalPg20260917",
+          "name": "CBM Postgres - Local Demo"
+        }
+      }
+    },
+    {
+      "id": "3b25edf2e7d847e65b45bfdd2355d368",
+      "name": "Build Submission Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        450
+      ],
+      "parameters": {
+        "jsCode": "const result=$json.result||$json.context||$json;\nconst esc=v=>String(v??'').replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c]));\nconst success=result.status==='SUBMITTED';\nconst messages={SUBMITTED:'Rapporto caricato in Drive. WF2 lo elaborerà e richiederà la decisione del FM. Il ticket non è ancora chiuso. / Report uploaded to Drive. WF2 will assess it and request the FM decision. The ticket is not closed yet.',UNCONFIRMED:'Caricamento da verificare: contatta il FM. Non inviare una seconda copia finché il primo tentativo non è stato verificato. / Upload needs verification: contact the FM before sending another copy.',INVALID:'Controlla il modulo e riprova / Check the form and try again.',NOT_OPEN:'Il ticket non accetta rapporti in questo stato / The ticket is not accepting reports in its current state.',UNAVAILABLE:'Link non valido o scaduto / Invalid or expired link.'};\nconst html='<!doctype html><html lang=\"it\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>CBM report submission</title><body style=\"font:18px system-ui;max-width:740px;margin:60px auto;padding:24px;color:#183b38\"><p>CBM · RAPPORTO TECNICO</p><h1>'+(success?'Rapporto inviato / Report submitted':'Invio non completato / Submission incomplete')+'</h1><p>'+esc(messages[result.status]||messages.UNAVAILABLE)+'</p>'+(result.ticketId?'<p>Ticket #'+esc(result.ticketId)+'</p>':'')+(result.submissionId?'<p>Submission: '+esc(result.submissionId)+'</p>':'')+(result.detail?'<p>'+esc(result.detail)+'</p>':'')+'</body></html>';\nreturn [{json:{html,httpCode:success?200:result.status==='INVALID'?422:409}}];\n"
+      }
+    },
+    {
+      "id": "36822fee9512c2efcc9dbf0b78488078",
+      "name": "Show Submission Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        2400,
+        450
+      ],
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseCode": "={{ $json.httpCode }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Cache-Control",
+                "value": "no-store"
+              },
+              {
+                "name": "Referrer-Policy",
+                "value": "no-referrer"
+              },
+              {
+                "name": "X-Content-Type-Options",
+                "value": "nosniff"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "47e7bc5f3806f065a535d02d247bb2f9",
+      "name": "Portal guide",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -320
+      ],
+      "parameters": {
+        "content": "## Technician report portal / Rapporto tecnico\nGET validates the ticket-specific email link and opens the bilingual form. POST validates the same assignment, checks the generated PDF, claims one submission for the current approval cycle and uploads it to the existing completed-reports Drive folder. WF2 is triggered by that PDF. No email or FM/IFC action is performed here.\n\nPublish this workflow to enable /webhook/cbm-technician-report. The generic URL without a valid ticket/token is deliberately unavailable. The bearer link expires after 30 days. Claim without a Drive receipt requires operator reconciliation before retrying.",
+        "height": 260,
+        "width": 850
+      }
+    }
+  ],
+  "connections": {
+    "Technician Report Page": {
+      "main": [
+        [
+          {
+            "node": "Validate Report Link",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Report Link": {
+      "main": [
+        [
+          {
+            "node": "Build Technician Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Technician Page": {
+      "main": [
+        [
+          {
+            "node": "Show Technician Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Submit Technician Report": {
+      "main": [
+        [
+          {
+            "node": "Validate Submission Access",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Submission Access": {
+      "main": [
+        [
+          {
+            "node": "Prepare Report PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Report PDF": {
+      "main": [
+        [
+          {
+            "node": "Report Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report Valid?": {
+      "main": [
+        [
+          {
+            "node": "Claim Report Upload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Submission Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim Report Upload": {
+      "main": [
+        [
+          {
+            "node": "Upload Claimed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload Claimed?": {
+      "main": [
+        [
+          {
+            "node": "Restore Report Binary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Submission Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore Report Binary": {
+      "main": [
+        [
+          {
+            "node": "Upload Report to Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload Report to Drive": {
+      "main": [
+        [
+          {
+            "node": "Record Report Upload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Report Upload": {
+      "main": [
+        [
+          {
+            "node": "Build Submission Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Submission Result": {
+      "main": [
+        [
+          {
+            "node": "Show Submission Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Rome"
+  },
+  "versionId": "dfcc8439-a0ee-4f42-b481-a207381a7eb0",
+  "activeVersionId": null
+}

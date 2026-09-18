@@ -1,0 +1,150 @@
+{
+  "release": "2026.09.14",
+  "generatedAt": "2026-09-18T07:16:52.6467158Z",
+  "passedChecks": 386.0,
+  "allPassed": true,
+  "suites": [
+    {
+      "suite": "refresh-wf1-demo-overlay",
+      "exitCode": 0,
+      "passedChecks": 0,
+      "test": false,
+      "log": "output/validation/refresh-wf1-demo-overlay.log"
+    },
+    {
+      "suite": "build-wf2",
+      "exitCode": 0,
+      "passedChecks": 0,
+      "test": false,
+      "log": "output/validation/build-wf2.log"
+    },
+    {
+      "suite": "build-wf3",
+      "exitCode": 0,
+      "passedChecks": 0,
+      "test": false,
+      "log": "output/validation/build-wf3.log"
+    },
+    {
+      "suite": "setup-pglite",
+      "exitCode": 0,
+      "passedChecks": 0,
+      "test": false,
+      "log": "output/validation/setup-pglite.log"
+    },
+    {
+      "suite": "setup-pgvector",
+      "exitCode": 0,
+      "passedChecks": 0,
+      "test": false,
+      "log": "output/validation/setup-pgvector.log"
+    },
+    {
+      "suite": "dispatch",
+      "exitCode": 0,
+      "passedChecks": 20,
+      "test": true,
+      "log": "output/validation/dispatch.log"
+    },
+    {
+      "suite": "demo-ingestion",
+      "exitCode": 0,
+      "passedChecks": 11,
+      "test": true,
+      "log": "output/validation/demo-ingestion.log"
+    },
+    {
+      "suite": "knowledge",
+      "exitCode": 0,
+      "passedChecks": 15,
+      "test": true,
+      "log": "output/validation/knowledge.log"
+    },
+    {
+      "suite": "database-design",
+      "exitCode": 0,
+      "passedChecks": 40,
+      "test": true,
+      "log": "output/validation/database-design.log"
+    },
+    {
+      "suite": "database-migrate",
+      "exitCode": 0,
+      "passedChecks": 6,
+      "test": true,
+      "log": "output/validation/database-migrate.log"
+    },
+    {
+      "suite": "knowledge-extract",
+      "exitCode": 0,
+      "passedChecks": 9,
+      "test": true,
+      "log": "output/validation/knowledge-extract.log"
+    },
+    {
+      "suite": "wf2-structure",
+      "exitCode": 0,
+      "passedChecks": 14,
+      "test": true,
+      "log": "output/validation/wf2-structure.log"
+    },
+    {
+      "suite": "wf2-nodes",
+      "exitCode": 0,
+      "passedChecks": 40,
+      "test": true,
+      "log": "output/validation/wf2-nodes.log"
+    },
+    {
+      "suite": "wf2-migration",
+      "exitCode": 0,
+      "passedChecks": 30,
+      "test": true,
+      "log": "output/validation/wf2-migration.log"
+    },
+    {
+      "suite": "wf3-structure",
+      "exitCode": 0,
+      "passedChecks": 47,
+      "test": true,
+      "log": "output/validation/wf3-structure.log"
+    },
+    {
+      "suite": "wf3-nodes",
+      "exitCode": 0,
+      "passedChecks": 55,
+      "test": true,
+      "log": "output/validation/wf3-nodes.log"
+    },
+    {
+      "suite": "wf3-queries",
+      "exitCode": 0,
+      "passedChecks": 85,
+      "test": true,
+      "log": "output/validation/wf3-queries.log"
+    },
+    {
+      "suite": "services",
+      "exitCode": 0,
+      "passedChecks": 10,
+      "test": true,
+      "log": "output/validation/services.log"
+    },
+    {
+      "suite": "http-smoke",
+      "exitCode": 0,
+      "passedChecks": 3,
+      "test": true,
+      "log": "output/validation/http-smoke.log"
+    },
+    {
+      "suite": "reproducible",
+      "exitCode": 0,
+      "passedChecks": 1,
+      "test": true,
+      "log": "output/validation/reproducible.log"
+    }
+  ],
+  "liveN8nTested": false,
+  "liveExternalProvidersTested": false
+}

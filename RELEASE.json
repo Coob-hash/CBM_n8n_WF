@@ -1,0 +1,12 @@
+{
+  "release": "2026.09.14",
+  "predecessor": "13_09_2026 release CBM",
+  "review": "2026_09_14_CBM_release_review.md",
+  "databaseContract": "legacy",
+  "deploymentStatus": "not deployed",
+  "sourceFiles": 409,
+  "passedChecks": 395.0,
+  "previousReleaseUnchanged": true,
+  "liveN8nTested": false,
+  "localServicesTested": true
+}

@@ -1,129 +1,17 @@
-# WF2: report-first completion, optional photograph, supervised closure
+# WF2 completion and approval — single-PDF submission, 2026.09.17
 
-WF2 previously treated the **photograph** as the completion: a Drive upload named
-`TICKET-<id>.jpg` triggered a before/after vision comparison, and that comparison was the
-only assessment. The completion contract is now the other way round — the **written report
-is mandatory and the photograph optional** — and the closure that follows the facility
-manager's approval is carried out by a supervising agent rather than a fixed node chain.
+Build with `python wf2/build_wf2.py`; the builder applies `review_fixes.py` to the historical `original_wf2.json`. Use the root `rebuild.ps1` for the complete validation sequence.
 
-```
-Completed Upload (Drive Trigger)      TICKET-<id>.pdf
-  └ Extract Ticket ID                 a lone photograph ends the run quietly
-    └ Fetch Ticket                    joins technicians; aliases the email fields
-      └ Download Report PDF
-        └ Extract Report Text         pdf-parse; grades OK / EMPTY / PARSE_ERROR
-          └ Find AFTER Photo          searches the folder for a matching image
-            └ Photo Available?
-               ├ yes → Download AFTER + BEFORE → Merge → Claude Vision → Parse Verification ┐
-               └ no  ────────────────────────────────────────────────────────────────────── ┤
-                                                                     Build Assessment Input ┘
-                                                                     └ Assess Completion (Report)   ← mandatory
-                                                                       └ Parse Completion Assessment
-                                                                         └ Set Pending Approval
-                                                                           └ FM Approval (Email + Wait)
-                                                                             └ FM Approved?
-                                                                                ├ yes ┐
-                                                                                └ no  ┴ Closure Context
-                                                                                        └ Closure Supervisor  (agent, 9 tools)
-                                                                                          └ Verify Closure Outcome
-                                                                                            └ Closure Settled?
-                                                                                               ├ yes → Closure Recorded
-                                                                                               └ no  → Notify FM - Closure Needs Attention
-```
+Technicians upload one `TICKET-<id>.pdf` from the bilingual template, optionally including an AFTER photo. Standalone image uploads are ignored. Intake requires a technician and status ASSIGNED, WORK_DONE or REWORK. Missing/mismatched tickets notify the FM. See [PDF_SUBMISSION.md](PDF_SUBMISSION.md) for extraction rules and the revised canvas route.
 
-## Why a chain reads the report, not an agent
+PDF text is mandatory evidence. `Extract Report Text and Photo` calls the internal Python `/reports/extract` service using pypdf. It extracts the optional photo from the named PDF attachment, or from an older PDF containing one distinct eligible image. Scanned PDFs require a readable written replacement; the extractor grades them EMPTY. The report assessment proposes PENDING_APPROVAL, REWORK or NEEDS_TRIAGE. Code validates that recommendation and stores it in verification. The persisted ticket waits in PENDING_APPROVAL for the FM's independent decision, even when the recommendation is negative.
 
-`Assess Completion (Report)` is an **LLM chain**, not an agent. It makes one decision from
-one body of text; it needs no tools and no multi-step reasoning, so an agent would add
-latency and nondeterminism and buy nothing. The agent appears where it earns its place:
-after approval, where operations can fail for reasons a fixed chain cannot recover from.
+BEFORE file IDs are derived from the stored `photo_before_url` (`/d/<id>` or `?id=<id>`). AFTER evidence now comes from the PDF; there is no folder search or separate AFTER Drive ID. The report ID/link and verification JSON preserve its provenance. If a comparable BEFORE file is absent or its download fails, the report remains assessable with an explicit evidence limitation.
 
-**The model proposes a status; `Parse Completion Assessment` decides it.** The chain returns
-one of `PENDING_APPROVAL`, `REWORK` or `NEEDS_TRIAGE`. Anything outside that vocabulary,
-unparseable output, or a report that could not be read becomes `REWORK` with the reason
-recorded — never a silent `PENDING_APPROVAL`, and never an invented status reaching SQL.
-When the node overrides the model, the override reason leads the summary the facility
-manager reads, so a confident model sentence never sits next to a status contradicting it.
+An explicit true/false FM payload is APPROVED/REJECTED. A missing payload is EXPIRED: record CBM_WF2_APPROVAL_EXPIRED, retain PENDING_APPROVAL, and loop to Gmail sendAndWait for renewed links. The current submission has an `approval_id`; a persisted CBM_WF2_APPROVAL with that identity is required by closure/rework SQL. Rejection reasons are fixed from the explicit decision and never invented by the agent.
 
-A scanned or photographed report is graded `EMPTY`: `pdf-parse` is a text extractor, not an
-OCR engine. Such a report cannot pass, whatever the model concludes about it.
+The closure supervisor retains nine tools and an advisory budget of three attempts per operation. Three tools use two saved helpers under `wf2/workflows/`: guarded IFC writing and verified notification sending for both recipients. Missing GlobalIds and failed IFC writes block closure. The helper uses `wf2:<ticket>:<approval>` as operation_key and persists the actual result. Closure requires a matching successful result and model version. The final check additionally requires the statistics receipt and all current-approval Gmail send receipts. Incomplete objectives are recorded before the FM attention email. Uncertain sends are not blindly repeated. See [STRICT_CLOSURE.md](STRICT_CLOSURE.md).
 
-## The closure supervisor
+Apply the root legacy SQL files in the order documented in README.md. The 27-table `database/` package is a design study, including incompatible report-only evidence guards, and is not a deployment prerequisite.
 
-One agent handles both outcomes — the approved and rejected branches of `FM Approved?` both
-enter `Closure Context`, which binds the ticket identity and the objective list. The agent
-performs the same operations the seven replaced nodes did:
-
-| Decision | Objectives |
-|---|---|
-| `APPROVED` | `log_ifc_maintenance` → `close_ticket` → `update_technician_stats` → notify technician → notify FM |
-| `REJECTED` | `reopen_for_rework` → notify technician |
-
-**Attempt budget: 3 per operation.** On failure the agent reads the error rather than
-repeating the identical call. If the error names a missing column, an unknown relation or a
-type mismatch, it calls `inspect_schema` — read-only, over `information_schema` — and retries
-with corrected arguments. After three attempts it stops, continues with objectives that do
-not depend on the failed one, and reports precisely what failed.
-
-**The agent cannot execute free-form SQL.** Every database tool runs fixed parameterized SQL
-with the ticket bound by the workflow; where the agent genuinely chooses something it does so
-through a typed `$fromAI` argument (the IFC version string, the rejection reason, an email
-body). This follows the rule already established for WF1's dispatch agent.
-
-**Its report is not proof.** `Verify Closure Outcome` reads committed database state, and
-`Closure Settled?` compares it against the decision. A ticket that did not reach `CLOSED` or
-`REWORK` escalates to the facility manager with the attempt count and the agent's own account
-of what went wrong. `CBM_WF2_ATTEMPT` and `CBM_WF2_NOTICE` events in `ticket_events` make
-every retry auditable.
-
-Database tools are idempotent — closing a closed ticket reports zero rows changed. **Email is
-not**, so `check_notice` exists for the agent to consult before re-sending after an uncertain
-result.
-
-## Files
-
-| File | Purpose |
-|---|---|
-| `build_wf2.py` | Rebuilds the workflow from `original_wf2.json`; re-runnable, and re-pins the fixture hash |
-| `original_wf2.json` | The pristine export, byte-for-byte; the build reads this, never its own output |
-| `validate_wf2.py` | Structural checks: dangling connections, unresolved `$('Node')` expressions, reachability, agent wiring |
-| `test_wf2_nodes.mjs` | Behavioural tests for the Code nodes, run against the JavaScript stored in the export |
-| `test_migration.mjs` | Applies `schema.sql` + `schema_wf2_completion.sql` to PGlite and exercises every statement WF2 and the tools run |
-
-```powershell
-node phase_b\setup-test-runtime.js   # once: installs the PGlite engine the SQL tests need
-python wf2\build_wf2.py
-python wf2\validate_wf2.py
-node wf2\test_wf2_nodes.mjs
-node wf2\test_migration.mjs
-node phase_b\test-dispatch.js        # WF2 is hash-pinned there; the build re-pins it
-```
-
-`test_migration.mjs` and `test-dispatch.js` both run against PGlite, which lives in the
-Git-ignored `phase_b/.test-runtime/`. Run `setup-test-runtime.js` once per clone.
-
-## Before importing
-
-1. Apply the migration: `psql -v ON_ERROR_STOP=1 -d cbm -f schema_wf2_completion.sql`.
-   It is additive and idempotent. It is deliberately **not** in `database/migrations/`, which
-   `migrate.py` reserves for the 27-table `cbm` schema.
-2. Replace `REPLACE_WITH_COMPLETED_FOLDER_ID` in both the trigger and `Find AFTER Photo`, and
-   the credential placeholders, as with every export here.
-3. Technicians upload `TICKET-<id>.pdf`. A photograph may accompany it under the same
-   `TICKET-<id>` stem, in any order; only the report starts an assessment.
-
-## Known limits
-
-- **The legacy contract.** These queries target the tables in `schema.sql`, which is what WF1
-  writes to. `database/` holds a newer 27-table `cbm` schema whose `completion_submissions`,
-  `assessments` and `approval_requests` model this flow more precisely, and whose
-  `ifc_sync_attempts` and `message_attempts` carry native attempt tracking. Column names here
-  were chosen to mirror it, so that migration is a rename rather than a redesign. Note that
-  `cbm.assessments` currently requires `after_file_id` for a `REPAIR_VERIFICATION`, which an
-  optional photograph contradicts; that CHECK needs relaxing before the flow moves across.
-- **Email idempotency is advisory.** `check_notice` and the recorded `CBM_WF2_NOTICE` events
-  let the agent avoid a double send, but nothing enforces it at the transport, unlike
-  `cbm.messages.idempotency_key`.
-- **Untested against live services.** Everything here is verified offline: the Code nodes
-  against their stored source, the SQL against PGlite. The agent's recovery behaviour, Gmail
-  delivery and the IFC service call still need a run against the real instance.
+`test_wf2_nodes.mjs` checks exported Code behavior; `validate_wf2.py` checks graph structure. `test_migration.mjs` retains historical migration compatibility cases. The WF1, WF2 and WF3 suites in `rebuild.ps1` execute the current exported queries, expiry paths, authorization guards, IFC receipts and field references. Full live n8n/Gmail/model acceptance remains pending.

@@ -13,7 +13,7 @@
 // at full resolution.
 
 // ---- CONFIG --------------------------------------------------------------
-let IFC_SERVICE_URL = 'http://localhost:8000';
+let IFC_SERVICE_URL = '';
 try { if ($env.IFC_SERVICE_URL) IFC_SERVICE_URL = $env.IFC_SERVICE_URL; } catch (e) { /* env access blocked */ }
 IFC_SERVICE_URL = IFC_SERVICE_URL.replace(/\/+$/, '');
 

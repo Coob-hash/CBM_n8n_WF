@@ -30,17 +30,18 @@ async function run(code, { input = {}, nodes = {}, binary = null } = {}) {
     }
     return { first: () => ({ json: nodes[name] }) };
   };
-  const helpers = { getBinaryDataBuffer: async () => binary };
-  const fn = new Function('$input', '$', 'require',
+  const helpers = { getBinaryDataBuffer: async () => binary,
+    httpRequest: async () => ({...(await globalThis.__pdfStub()), photo_status:'NONE'}) };
+  const fn = new Function('$input', '$', 'require', '$env',
     `return (async function () { ${code} }).call(this);`);
   return fn.call({ helpers }, $input, $, (m) => {
     if (m === 'pdf-parse') return globalThis.__pdfStub;
     throw new Error('module not allowlisted: ' + m);
-  });
+  }, {IFC_SERVICE_URL:'http://ifc-service.test:8000'});
 }
 
 // ---------------------------------------------------------------------------
-console.log('\n1. Extract Ticket ID - report mandatory, photo ignored on its own');
+console.log('\n1. Extract Ticket ID - one PDF submission');
 {
   const code = src('Extract Ticket ID');
   const pdf = await run(code, { input: { name: 'TICKET-42.pdf', id: 'f1', webViewLink: 'http://d/f1' } });
@@ -50,7 +51,7 @@ console.log('\n1. Extract Ticket ID - report mandatory, photo ignored on its own
 
   for (const name of ['TICKET-42.jpg', 'TICKET-42.png', 'TICKET-42.heic']) {
     const r = await run(code, { input: { name, id: 'p1' } });
-    check(`a lone photo (${name}) ends the run quietly`, Array.isArray(r) && r.length === 0);
+    check(`a lone photo (${name}) is ignored`, r.length===0);
   }
   const other = await run(code, { input: { name: 'notes.docx', id: 'x' } });
   check('an unrelated file ends the run quietly', other.length === 0);
@@ -66,9 +67,9 @@ console.log('\n1. Extract Ticket ID - report mandatory, photo ignored on its own
 }
 
 // ---------------------------------------------------------------------------
-console.log('\n2. Extract Report Text - PDF quality gating');
+console.log('\n2. Extract Report Text and Photo - PDF quality gating');
 {
-  const code = src('Extract Report Text');
+  const code = src('Extract Report Text and Photo');
   const ctx = { 'Extract Ticket ID': { ticket_id: 42, report_file_id: 'f1' } };
 
   globalThis.__pdfStub = async () => ({ text: 'Replaced the cartridge and tested the valve. No leaks remain.', numpages: 1 });
@@ -92,7 +93,7 @@ console.log('\n3. Build Assessment Input - photo optional');
 {
   const code = src('Build Assessment Input');
   const base = {
-    'Extract Report Text': { report_text: 'Valve replaced.', report_quality: 'OK', report_words: 2,
+    'Extract Report Text and Photo': { report_text: 'Valve replaced.', report_quality: 'OK', report_words: 2, photo_status:'NONE',
                              report_file_id: 'f1', report_link: 'http://d/f1' },
     'Fetch Ticket': { id: 42, ifc_name: 'Radiator', description: 'leaking',
                       technician_name: 'Mario', technician_email: 'm@x.com' },
@@ -105,6 +106,7 @@ console.log('\n3. Build Assessment Input - photo optional');
         /No photograph was supplied/.test(noPhoto[0].json.vision_summary));
 
   const withPhoto = await run(code, { nodes: { ...base,
+    'Extract Report Text and Photo': {...base['Extract Report Text and Photo'],photo_status:'OK',photo_source:'PDF_ATTACHMENT'},
     'Parse Verification': { repair_verified: true, ai_confidence: 0.8, observations: 'looks fixed',
                             after_file_id: 'a1', after_link: 'http://d/a1' } } });
   check('photo_supplied is true when vision ran', withPhoto[0].json.photo_supplied === true);
@@ -173,8 +175,8 @@ console.log('\n5. Closure Context - one bounded path for both decisions');
     technician_email: 'm@x.com', object_type: 'Radiator', damage_description: 'leaking',
     observations: 'done', report_link: 'l', after_link: '', photo_supplied: false };
 
-  const approved = await run(code, { nodes: {
-    'FM Approval (Email + Wait)': { data: { approved: true } },
+  const approved = await run(code, { input:{decision:'APPROVED',route:'DECIDED'}, nodes: {
+    'Set Pending Approval': {approval_id:'approval-1'},
     'Parse Completion Assessment': assessment } });
   check('approval yields decision APPROVED', approved[0].json.decision === 'APPROVED');
   check('approved objectives are the five closure steps',
@@ -182,19 +184,20 @@ console.log('\n5. Closure Context - one bounded path for both decisions');
         approved[0].json.objectives.includes('log_ifc_maintenance'));
   check('attempt budget is 3', approved[0].json.attemptBudget === 3);
 
-  const rejected = await run(code, { nodes: {
-    'FM Approval (Email + Wait)': { data: { approved: false } },
+  const rejected = await run(code, { input:{decision:'REJECTED',route:'DECIDED',rejection_reason:'More work required'}, nodes: {
+    'Set Pending Approval': {approval_id:'approval-1'},
     'Parse Completion Assessment': assessment } });
   check('rejection yields decision REJECTED', rejected[0].json.decision === 'REJECTED');
   check('rejected objectives are rework and notify',
         JSON.stringify(rejected[0].json.objectives) ===
         JSON.stringify(['reopen_for_rework', 'notify_technician_rework']));
 
-  const timedOut = await run(code, { nodes: {
-    'FM Approval (Email + Wait)': {},
-    'Parse Completion Assessment': assessment } });
-  check('a missing approval payload is treated as REJECTED, not approved',
-        timedOut[0].json.decision === 'REJECTED');
+  let missingRejected=false;
+  try { await run(code, { nodes: {
+    'Set Pending Approval': {approval_id:'approval-1'},
+    'Parse Completion Assessment': assessment } }); }
+  catch(e) { missingRejected=/stored FM decision/.test(String(e.message)); }
+  check('a missing stored decision cannot enter closure', missingRejected);
 }
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');

@@ -1,4 +1,6 @@
-# CBM PostgreSQL database
+> **2026.09.14 release decision:** this package is frozen as a design study. The live workflow contract remains the root legacy public schema. Do not apply these migrations to deploy the release. A future cutover must revise both the REPAIR_VERIFICATION AFTER-photo check and the approval evidence guard to support mandatory reports with optional photos, define PDF REPORT evidence roles, and rewrite all WF1/WF2/WF3 queries. Historical text below describes that proposed design, not current application wiring.
+
+# CBM PostgreSQL database — design study (not deployed)
 
 The approved 27-table database is implemented by the migrations in this directory. It supports one building and one current facility manager, with historical actors, evidence, dispatch, review, delivery and IFC records.
 

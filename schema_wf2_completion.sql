@@ -40,6 +40,11 @@ ALTER TABLE tickets ADD COLUMN IF NOT EXISTS closed_at        TIMESTAMPTZ;
 ALTER TABLE technicians ADD COLUMN IF NOT EXISTS jobs_completed INT NOT NULL DEFAULT 0;
 
 -- --- Guards -------------------------------------------------------------------
+-- Legacy closed rows predate this column. NOT VALID alone would reject their
+-- next update, so normalize existing values before installing and validating it.
+UPDATE tickets SET closed_at=coalesce(updated_at,created_at,clock_timestamp())
+ WHERE status='CLOSED' AND closed_at IS NULL;
+UPDATE tickets SET closed_at=NULL WHERE status<>'CLOSED' AND closed_at IS NOT NULL;
 -- A closed ticket must carry its closure time, and vice versa. Matches the CHECK
 -- the cbm schema already enforces on cbm.tickets.
 DO $$
@@ -49,6 +54,8 @@ BEGIN
       CHECK ((status = 'CLOSED') = (closed_at IS NOT NULL)) NOT VALID;
   END IF;
 END $$;
+
+ALTER TABLE tickets VALIDATE CONSTRAINT tickets_closed_at_consistent;
 
 -- The verification verdict is an object when present, never a bare scalar.
 DO $$

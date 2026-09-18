@@ -1,67 +1,89 @@
-# CBM
+# CBM release 2026.09.14
 
-Maintenance ticket intake, technician dispatch and IFC services.
+This repository contains the current CBM application source and reproducible workflow exports. It incorporates the review in `2026_09_14_CBM_release_review.md` and the subsequent intake, OpenRouter vision, technician portal, WF3 action, strict closure, and shared WF2 approval updates. See [release changes](RELEASE_NOTES.md) and [generated validation results](validation/release-validation.json).
 
-## Project layout
+The deployable database contract is **the legacy public schema**. `database/` is a retained, tested **design study**, not the production migration path. Its report-only completion checks are incompatible with these workflows; do not install it alongside this release as an application upgrade.
 
-| Path | Purpose |
-|---|---|
-| `wf1_ticket_intake_and_dispatch.json` | Current WF1 export with native Postgres tools and the dispatch agent |
-| `n8n_wf2_completion_approval_ifc_update.json` | Current WF2 export: report-first completion, optional photograph, supervised closure |
-| `wf2/` | WF2 source, builder, validation and tests |
-| `phase_b/workflows/` | Seven saved helper workflows required by WF1 |
-| `phase_b/` | Dispatch source, builder, configuration and tests |
-| `knowledge/` | Supabase vector knowledge, native n8n synchronization, IFC/document extractor and tests |
-| `database/` | Approved PostgreSQL schema, migration runner, transaction functions and database tests |
-| `phase_a/` | Source for the current image-preparation node |
-| `ifc_service.py`, `capture_normalize.py` | IFC API and image normalization |
-| `calibrate_registration.py`, `create_sample_ifc.py` | Registration calibration and sample model utilities |
-| `schema.sql` | Legacy schema fixture used by the current workflow exports |
-| `schema_wf2_completion.sql` | Additive legacy migration required by WF2 |
-| `docs/WF1_Native_Tools_Guide.docx` | Dispatch architecture before the knowledge extension; see the current supplement below |
+## Rebuild everything
 
-## Configure and import
-
-The new 27-table database is implemented separately under the PostgreSQL `cbm` schema. See [database setup](database/README.md) for migrations and validation. The existing workflow exports have not yet been switched to this new database contract.
-
-Follow [the dispatch guide](phase_b/README.md) to configure `phase_b/deployment.local.json`, import the seven helpers, bind their IDs and import WF1. The exported workflows contain template settings. Configure the existing Phase A service endpoints and credentials in n8n as well.
-
-The private local deployment file is retained and ignored by Git. No workflow is activated by rebuilding these files.
-
-WF1 now also attaches a native **Supabase Vector Store** to the agent, with **OpenAI Embeddings** (`text-embedding-3-small`). See [technical knowledge setup and design](knowledge/README.md) for the separate Supabase schema, synchronization workflow, approved radiator mapping and invitation excerpts. The existing ticket database, Phase A and WF2 are preserved. Real radiator IFC/specification sources and service credentials are still required to populate and activate the integration.
-
-## Build and test
-
-From this directory, with Node.js available:
-
-```powershell
-node .\phase_b\build-workflow.js
-node .\phase_b\setup-test-runtime.js
-node .\phase_b\test-dispatch.js
-
-python .\wf2\build_wf2.py
-python .\wf2\validate_wf2.py
-node .\wf2\test_wf2_nodes.mjs
-node .\wf2\test_migration.mjs
-```
-
-`setup-test-runtime.js` installs the PGlite engine that both `test-dispatch.js` and
-`wf2\test_migration.mjs` need; run it once before either. The first command regenerates template exports. Pass `phase_b/deployment.local.json` to the builder for locally configured exports; keep those private. Test setup downloads the isolated PGlite runtime on demand into an ignored cache.
-
-For the Python service, install its dependencies in a virtual environment:
+Use Node.js and Python 3.13. The local release includes an isolated `.venv`; a clean checkout can prepare it with:
 
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install fastapi uvicorn "ifcopenshell>=0.8" numpy pydantic Pillow
-python create_sample_ifc.py
-uvicorn ifc_service:app --host 0.0.0.0 --port 8000
+.\.venv\Scripts\python.exe -m pip install -r requirements-lock.txt
+.\rebuild.ps1
 ```
 
-Sample model creation is optional. `ifc_service.py` documents the IFC model directory, axis mapping and registration configuration. Its image-normalization endpoint is used by the current Phase A node.
+The script stops on any failure, builds WF1 **including all 22 demo nodes**, then WF2 and WF3, runs every offline suite and the Python services, and verifies a second build produces identical exports and pins. Test logs go to `output/validation/`; the summary goes to `validation/release-validation.json`. Use `-Python <interpreter>` to select another interpreter or `-BuildOnly` to regenerate exports. Builders do not activate workflows.
 
-## Validation and versioning
+The equivalent build order is `node demo_ingestion/build.js`, `python wf2/build_wf2.py`, then `python wf3/build_wf3.py`. WF1 itself is the reviewed source export after the direct Phase-A/intake refactor; `phase_b/build-workflow.js` is retained only as a historical migration tool for the older canvas. The complete test command order is maintained in `rebuild.ps1` rather than duplicated in documents.
 
-The 25 local dispatch tests pass, as do the 14 WF2 structure checks, 41 WF2 node checks and 31 migration checks. Live n8n, Gmail, model and Python service integration still require environment-specific checks. WF2 now has its own legacy migration, `schema_wf2_completion.sql`, which must be applied before importing it.
+## Database installation and upgrade
 
-Git history is preserved. Track source and template exports together; do not commit private deployment values. `phase_b/original_wf1.json` is a required builder and regression-test fixture, not an alternate workflow to import.
+Use a separate test database first and `psql -v ON_ERROR_STOP=1` for each file. For a fresh demonstration database, start with `schema.sql` (includes sample technicians). For an existing legacy database, skip that fixture. Then apply, in order:
+
+1. `schema_dispatch_functions.sql` — single-call dispatch creation/response routines with transactional locks.
+2. `schema_wf2_completion.sql` — report columns and backfill/validation of old closed tickets.
+3. `schema_wf3_dashboard.sql` — dashboard status-change audit.
+4. `schema_release_review.sql` — approval identity, unique open element, and idempotency indexes.
+
+The last migration refuses to proceed if historical open tickets share an element. Reconcile those tickets with the FM; it does not delete or close them automatically. Never apply `database/migrations/` to deploy these workflow exports.
+
+Optional Supabase database: apply `knowledge/schema.sql` for production retrieval and `knowledge/demo_schema.sql` for the independent demo library. These belong in Supabase, not the dispatch database.
+
+## Import order
+
+Import and configure the seven `phase_b/workflows/*.json` helpers, two `wf2/workflows/*.json` helpers, and `knowledge/error_workflow.json`. Then import `knowledge/sync_workflow.json`, `wf1_ticket_intake_and_dispatch.json`, `n8n_wf2_completion_approval_ifc_update.json`, and `n8n_wf3_fm_dashboard.json`. All are inactive templates. Verify and rebind saved-workflow IDs after import; imports can assign new IDs. Rebind the sync workflow's error-workflow setting as well.
+
+WF2 helper IDs are `cbmWf2IfcReview1` (guarded IFC write) and `cbmWf2FmNotice1` (FM notice from committed state). WF1 IDs are in `phase_b/workflow-manifest.json`. Use internal n8n credential IDs, never Google OAuth client IDs; the WF1 builder rejects that common mistake. Private `deployment.local.json` was deliberately not copied from the predecessor; start from `phase_b/deployment.example.json`.
+
+No target n8n instance/version was provided and live import compatibility is **not certified**. Before activation, record the actual version in `deployment/acceptance.json` and run the ordinary/urgent ticket scenarios listed there. Node type versions are recorded in `deployment/node-versions.json`. Production n8n must allow the `pdf-parse` 1.x API used by WF2 (`NODE_FUNCTION_ALLOW_EXTERNAL=pdf-parse`) in its Code runner. On n8n 2.x, configure the task runner and environment access according to that version's documentation.
+
+## Configuration reference
+
+| Placeholder / environment variable | Purpose |
+|---|---|
+| `REPLACE_POSTGRES_CREDENTIAL_ID` | n8n credential for the legacy dispatch database; display name **CBM Postgres** |
+| `REPLACE_SUPABASE_POSTGRES_CREDENTIAL_ID` | SQL connection to the separate knowledge database; **CBM Supabase Postgres** |
+| `REPLACE_SUPABASE_CREDENTIAL_ID` | Supabase backend API credential for vectors |
+| `REPLACE_GMAIL_CREDENTIAL_ID` | n8n Gmail OAuth credential; **CBM Gmail** |
+| `REPLACE_DRIVE_CREDENTIAL_ID` | n8n Google Drive OAuth credential |
+| `REPLACE_ANTHROPIC_CREDENTIAL_ID` | Anthropic credential, including Phase A vision |
+| `REPLACE_OPENAI_CREDENTIAL_ID` | OpenAI embeddings credential |
+| `REPLACE_MULTISET_CREDENTIAL_ID` | MultiSet M2M Basic Auth credential |
+| `REPLACE_KNOWLEDGE_HEADER_CREDENTIAL_ID` | Header Auth sending `X-CBM-Knowledge-Key` |
+| `REPLACE_MISTRAL_HEADER_CREDENTIAL_ID` | Header Auth sending `Authorization: Bearer <key>` for demo OCR |
+| `REPLACE_FM_RESUME_HEADER_CREDENTIAL_ID` | FM-only Header Auth for `POST /cbm-wf1-resume` |
+| `REPLACE_CHAT_AUTH_CREDENTIAL_ID` | FM chat Basic Auth credential |
+| `REPLACE_FM_EMAIL@example.com` | Real FM/operator mailbox |
+| `REPLACE_N8N_HOST` | Public HTTPS host in `callbackBase`; include `/webhook` once |
+| `REPLACE_FOLDER_ID_01_INCOMING_SNAPSHOTS` | Incoming Drive folder |
+| `REPLACE_COMPLETED_FOLDER_ID` | Completed reports/photos Drive folder |
+| `IFC_SERVICE_URL` | One reachable base URL used by both WF1 and WF2, e.g. `http://ifc-service:8000` |
+| `MULTISET_MAP_CODE` | Actual map identifier, never stored as a REPLACE placeholder |
+| `CBM_TECHNICAL_SHEETS_DIR` | Absolute path inside the self-hosted n8n runtime containing the demo PDFs |
+| `IFC_MODEL_DIR` | Service-side directory containing versioned IFC files and `active_model.txt` |
+| `CBM_KNOWLEDGE_CATALOG`, `CBM_KNOWLEDGE_KEY` | Approved extractor catalog and private header key |
+
+Configure `knowledge.snapshotUrl` in the private deployment configuration separately from the IFC endpoint. `AXIS_MODE` and `MULTISET_TO_IFC_MATRIX` configure registration as documented in `ifc_service.py`. Secrets belong in n8n credentials/environment, not exported JSON. See `deployment/nginx.conf.example` for a TLS/IP restriction example for the FM chat and resume routes.
+
+## Services and completion contract
+
+```powershell
+.\.venv\Scripts\python.exe create_sample_ifc.py
+.\.venv\Scripts\python.exe -m uvicorn ifc_service:app --host 127.0.0.1 --port 8000
+# In another terminal, with the approved catalog/key configured:
+.\.venv\Scripts\python.exe -m uvicorn knowledge.service:app --host 127.0.0.1 --port 8001
+```
+
+The sample now includes a radiator at `(6, 1, 0.6)`. It is synthetic and has no manufacturer mapping until one is explicitly approved. The IFC write API requires `operation_key`; reuse the exact key and body on retry. Writers serialize across processes, journal the result, and atomically switch the active pointer. A conflicting replay returns HTTP 409.
+
+Technicians upload **`TICKET-<id>.pdf`**. An optional **`TICKET-<id>.jpg`** should arrive first to be included in the assessment. A lone photo for an assigned/rework ticket with no stored report prompts a report reminder. FM timeout after 72 hours records expiry, keeps `PENDING_APPROVAL`, and sends a fresh approval request. Only an explicit rejection causes rework. IFC failure is audited and leaves the version NULL; FM mail reads the actual stored result.
+
+## Documentation and demo library
+
+Current guides: [WF1](phase_b/README.md), [WF2](wf2/README.md), [knowledge/demo](knowledge/README.md), [WF3](wf3/README.md). The Word guide `docs/WF1_Native_Tools_Guide.docx` is a **historical architecture reference**, predating both production knowledge and demo ingestion; use these Markdown guides for this release.
+
+The three manufacturer PDFs remain local and ignored. `technical_sheets/README.md` names them; they are excluded from the release archive and source commit. Run **Demo - Load Technical Sheets** manually only after configuring Mistral OCR, OpenAI, Supabase and the mounted directory. Its `cbm_demo_technical_documents` library is **never searched by the dispatch agent**. Source: `demo_ingestion/build.js`; SQL: `knowledge/demo_schema.sql`.
+
+Local verification uses synthetic models, vectors, documents, and mail/model stubs. No production workflow, mailbox, Supabase instance, or repository remote was modified. The local service HTTP smoke tests are real; external provider integrations remain deployment acceptance work.

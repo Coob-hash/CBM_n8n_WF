@@ -1,0 +1,317 @@
+{
+  "id": "cbmWf2FmNotice1",
+  "name": "CBM - WF2 Notify FM from Stored Result",
+  "active": false,
+  "nodes": [
+    {
+      "name": "Bound Context",
+      "id": "1035f3346805fd25649930e5cf298bcd",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "context",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Parse Context",
+      "id": "e084129603399b863ddb43785b86e1c7",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "jsCode": "return [{json:JSON.parse($json.context)}];"
+      }
+    },
+    {
+      "name": "Claim Closure Notice",
+      "id": "a1fc33188b0a43a24e2ba6be1582f486",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT r.* FROM jsonb_to_record(cbm_wf2_claim_notice($1::jsonb)) AS r\n (send_status text,ticket_id int,approval_id uuid,notice_key text,claim_id uuid,recipient text,ifc_new_version text,reason text,already_sent boolean);",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($json)] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "cbmLocalPg20260917",
+          "name": "CBM Postgres - Local Demo"
+        }
+      }
+    },
+    {
+      "name": "Send Required?",
+      "id": "cbm-wf2-send-required",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.send_status === \"SEND\" }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Send Closure Notice",
+      "id": "ec7e2984b83dbcfb5277ddff83a557b1",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "operation": "send",
+        "sendTo": "={{ $json.recipient }}",
+        "emailType": "text",
+        "subject": "={{ \"[CBM] Ticket #\"+$json.ticket_id+($json.notice_key === \"technician:rework\" ? \" - rework required\" : \" - closed, IFC updated\") }}",
+        "message": "={{ $json.notice_key === \"technician:rework\" ? \"Ticket #\"+$json.ticket_id+\": \"+$json.reason+\" Complete a revised report after the required work: \"+$json.report_url : \"Ticket #\"+$json.ticket_id+\" is closed following FM approval. IFC version: \"+$json.ifc_new_version }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "R5EQDxDzCMYdMH9U",
+          "name": "Gmail account 3"
+        }
+      },
+      "retryOnFail": false,
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "name": "Validate Gmail Receipt",
+      "id": "cbm-wf2-gmail-receipt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Gmail output is the only source of a send receipt; the agent supplies none.\nconst claim = $('Claim Closure Notice').first().json;\nconst response = $input.first().json;\nconst sent = !response.error && typeof response.id === 'string' && response.id.trim().length > 0;\nreturn [{json:{ticket_id:claim.ticket_id,approval_id:claim.approval_id,\n  notice_key:claim.notice_key,claim_id:claim.claim_id,\n  send_status:sent?'SENT':'UNCONFIRMED',message_id:sent?response.id:null,\n  error:sent?null:String(response.error?.message||response.error||'Gmail returned no message ID; inspect the execution before retrying').slice(0,1000)}}];\n"
+      }
+    },
+    {
+      "name": "Record Notice Result",
+      "id": "a49b912795d5770da8c8224a625e18f1",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1344,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT cbm_wf2_record_notice($1::jsonb) AS result;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($json)] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "cbmLocalPg20260917",
+          "name": "CBM Postgres - Local Demo"
+        }
+      }
+    },
+    {
+      "name": "Notice Result",
+      "id": "cbm-wf2-notice-result",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1568,
+        144
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "a12731c980400b9e20aca83ce145fb21",
+      "name": "Prepare Technician Report Link",
+      "type": "n8n-nodes-base.postgres",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT CASE WHEN $1::integer IS NOT NULL THEN cbm_issue_technician_report_link($1::integer) ELSE NULL END AS report_link;",
+        "options": {
+          "queryReplacement": "={{ [$(\"Claim Closure Notice\").first().json.notice_key === \"technician:rework\" ? $(\"Claim Closure Notice\").first().json.ticket_id : null] }}"
+        }
+      },
+      "position": [
+        664,
+        380
+      ],
+      "typeVersion": 2.6,
+      "credentials": {
+        "postgres": {
+          "id": "cbmLocalPg20260917",
+          "name": "CBM Postgres - Local Demo"
+        }
+      }
+    },
+    {
+      "id": "9261fa85b27f654e8231246e791c0329",
+      "name": "Attach Technician Report Link",
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "jsCode": "const d=$('Claim Closure Notice').first().json,link=$json.report_link;\n if(d.notice_key==='technician:rework'&&!link?.token)throw new Error('Cannot issue a revised report link');\n return [{json:{...d,report_url:link?.token?\"https://bonanza-progress-hangover.ngrok-free.dev/webhook/cbm-technician-report\"+'?ticketId='+link.ticketId+'&token='+encodeURIComponent(link.token):null}}];"
+      },
+      "position": [
+        920,
+        380
+      ],
+      "typeVersion": 2
+    }
+  ],
+  "connections": {
+    "Bound Context": {
+      "main": [
+        [
+          {
+            "node": "Parse Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Context": {
+      "main": [
+        [
+          {
+            "node": "Claim Closure Notice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim Closure Notice": {
+      "main": [
+        [
+          {
+            "node": "Send Required?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Required?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Technician Report Link",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notice Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Closure Notice": {
+      "main": [
+        [
+          {
+            "node": "Validate Gmail Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Gmail Receipt": {
+      "main": [
+        [
+          {
+            "node": "Record Notice Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Notice Result": {
+      "main": [
+        [
+          {
+            "node": "Notice Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Technician Report Link": {
+      "main": [
+        [
+          {
+            "node": "Attach Technician Report Link",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach Technician Report Link": {
+      "main": [
+        [
+          {
+            "node": "Send Closure Notice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Rome"
+  }
+}

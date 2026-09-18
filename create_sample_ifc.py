@@ -1,6 +1,6 @@
 """
 Creates the minimal digitalized building required by the PoC: an IFC4 model
-with one storey, one space (Room_101) and three maintainable elements placed
+with one storey, one space (Room_101) and four maintainable elements placed
 at known coordinates. Geometry representations are intentionally omitted --
 for the CBM pipeline only spatial placement (ObjectPlacement) and identity
 (GlobalId) matter, which keeps the sample tiny and readable.
@@ -37,6 +37,8 @@ ap.add_argument("--window", nargs=3, type=float, metavar=("X", "Y", "Z"),
 ap.add_argument("--light", nargs=3, type=float, metavar=("X", "Y", "Z"),
                 default=[4.0, 3.0, 2.7], help="Light_101 position.")
 ap.add_argument("--out", default="room_v1.ifc", help="Output file name.")
+ap.add_argument("--radiator", nargs=3, type=float, default=[6.0, 1.0, 0.6],
+                metavar=("X","Y","Z"), help="Radiator_101 position (synthetic sample).")
 args = ap.parse_args()
 
 MODEL_DIR = Path("./models")
@@ -77,6 +79,7 @@ def add_element(ifc_class: str, name: str, x: float, y: float, z: float):
 door = add_element("IfcDoor", "Door_101", *args.door)          # = WF1 mock pose
 window = add_element("IfcWindow", "Window_101", *args.window)
 light = add_element("IfcLightFixture", "Light_101", *args.light)
+radiator = add_element("IfcSpaceHeater", "Radiator_101", *args.radiator)
 
 out = MODEL_DIR / args.out
 f.write(str(out))
@@ -84,5 +87,5 @@ f.write(str(out))
 
 print(f"Wrote {out}")
 print(f"{'Element':<12} {'GlobalId':<24} position")
-for el, pos in [(door, args.door), (window, args.window), (light, args.light)]:
+for el, pos in [(door, args.door), (window, args.window), (light, args.light), (radiator, args.radiator)]:
     print(f"{el.Name:<12} {el.GlobalId:<24} {tuple(pos)}")

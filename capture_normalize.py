@@ -104,10 +104,10 @@ def gate(cam: dict) -> list:
     out = []
     if not all(map(lambda v: v == v and abs(v) != float("inf"), (fx, fy, cx, cy))):
         return ["non-finite value in K"]
-    if not (0.5 * w <= fx <= 2.5 * w):
-        out.append("fx {:.1f} outside [{:.0f}, {:.0f}]".format(fx, 0.5 * w, 2.5 * w))
-    if not (0.5 * h <= fy <= 2.5 * h):
-        out.append("fy {:.1f} outside [{:.0f}, {:.0f}]".format(fy, 0.5 * h, 2.5 * h))
+    if not (0.3 * w <= fx <= 2.5 * w):
+        out.append("fx {:.1f} outside [{:.0f}, {:.0f}]".format(fx, 0.3 * w, 2.5 * w))
+    if not (0.3 * h <= fy <= 2.5 * h):
+        out.append("fy {:.1f} outside [{:.0f}, {:.0f}]".format(fy, 0.3 * h, 2.5 * h))
     if not (0.30 * w <= cx <= 0.70 * w):
         out.append("px {:.1f} outside [{:.0f}, {:.0f}]".format(cx, 0.30 * w, 0.70 * w))
     if not (0.30 * h <= cy <= 0.70 * h):
@@ -204,7 +204,12 @@ def normalize_jpeg(data: bytes, long_side: int = MAX_UPLOAD_LONG_SIDE,
         # px/py rather than cx/cy: this is the naming the MultiSet query body and the
         # existing WF1 node already use, so the result drops straight in.
         "camera": {
-            "source": "EXIF", "trusted": not rejections,
+            "source": "EXIF_ESTIMATE", "trusted": not rejections,
+            "calibrated": False,
+            "quality": "PLAUSIBLE_ESTIMATE" if not rejections else "REJECTED_ESTIMATE",
+            "method": "f35_times_source_width_divided_by_36",
+            "principal_point_assumption": "image_center",
+            "accuracy_verified": False,
             "fx": round(cam["fx"], 4), "fy": round(cam["fy"], 4),
             "px": round(cam["cx"], 4), "py": round(cam["cy"], 4),
             "width": out_w, "height": out_h,
@@ -215,6 +220,7 @@ def normalize_jpeg(data: bytes, long_side: int = MAX_UPLOAD_LONG_SIDE,
             "focal_length_mm": float(ex.get("FocalLength", 0) or 0) or None,
             "make": ex.get("Make"), "model": ex.get("Model"),
             "datetime_original": ex.get("DateTimeOriginal"),
+            "original_sha256": hashlib.sha256(data).hexdigest(),
         },
         "gate_rejections": rejections,
     }

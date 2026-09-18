@@ -14,10 +14,15 @@ CREATE TABLE IF NOT EXISTS public.cbm_knowledge_generations (
 CREATE TABLE IF NOT EXISTS public.cbm_knowledge_head (
  singleton boolean PRIMARY KEY DEFAULT true CHECK(singleton),
  generation uuid REFERENCES public.cbm_knowledge_generations(id),
+ building_generation uuid REFERENCES public.cbm_knowledge_generations(id),
  verified_at timestamptz, status text NOT NULL DEFAULT 'UNAVAILABLE'
  CHECK(status IN ('UNAVAILABLE','BUILDING','READY'))
 );
 INSERT INTO public.cbm_knowledge_head(singleton) VALUES(true) ON CONFLICT DO NOTHING;
+-- Upgrade existing installations: generation remains the published pointer.
+ALTER TABLE public.cbm_knowledge_head ADD COLUMN IF NOT EXISTS building_generation uuid REFERENCES public.cbm_knowledge_generations(id);
+UPDATE cbm_knowledge_head SET building_generation=generation,generation=NULL,status='UNAVAILABLE'
+ WHERE status='BUILDING' AND building_generation IS NULL;
 CREATE TABLE IF NOT EXISTS public.cbm_knowledge_sources (
  generation uuid NOT NULL REFERENCES public.cbm_knowledge_generations(id),
  chunk_id text NOT NULL, content text NOT NULL CHECK(length(content) BETWEEN 1 AND 1800),
@@ -36,7 +41,7 @@ CREATE INDEX IF NOT EXISTS cbm_knowledge_document_filter
 
 CREATE OR REPLACE FUNCTION public.cbm_begin_knowledge(p jsonb) RETURNS jsonb
 LANGUAGE plpgsql SET search_path=public,extensions,pg_temp AS $$
-DECLARE h cbm_knowledge_head; g cbm_knowledge_generations; k uuid; d jsonb;
+DECLARE h cbm_knowledge_head; g cbm_knowledge_generations; b cbm_knowledge_generations; k uuid; d jsonb;
  observed timestamptz; pending jsonb;
 BEGIN
  SELECT * INTO h FROM cbm_knowledge_head WHERE singleton FOR UPDATE;
@@ -50,19 +55,22 @@ BEGIN
  OR observed > clock_timestamp()+interval '30 seconds' THEN RAISE EXCEPTION 'Snapshot clock is stale or invalid'; END IF;
  IF h.verified_at > observed THEN RETURN jsonb_build_object('action','STALE'); END IF;
  SELECT * INTO g FROM cbm_knowledge_generations WHERE id=h.generation;
+ SELECT * INTO b FROM cbm_knowledge_generations WHERE id=h.building_generation;
  IF g.fingerprint=p->>'fingerprint' AND h.status='READY' THEN
-   UPDATE cbm_knowledge_head SET verified_at=observed WHERE singleton;
+   UPDATE cbm_knowledge_generations SET status='SUPERSEDED' WHERE id=h.building_generation;
+   UPDATE cbm_knowledge_head SET verified_at=observed,building_generation=NULL WHERE singleton;
    RETURN jsonb_build_object('action','UNCHANGED','generation',g.id);
  END IF;
- IF g.fingerprint=p->>'fingerprint' AND h.status='BUILDING'
- AND g.created_at>clock_timestamp()-interval '10 minutes' THEN
-   RETURN jsonb_build_object('action','BUSY','generation',g.id);
+ IF b.fingerprint=p->>'fingerprint' AND b.status='BUILDING'
+ AND b.created_at>clock_timestamp()-interval '65 minutes' THEN
+   UPDATE cbm_knowledge_head SET verified_at=observed WHERE singleton;
+   RETURN jsonb_build_object('action','BUSY','generation',b.id);
  END IF;
- UPDATE cbm_knowledge_generations SET status='SUPERSEDED' WHERE id=h.generation;
+ UPDATE cbm_knowledge_generations SET status='SUPERSEDED' WHERE id=h.building_generation;
  INSERT INTO cbm_knowledge_generations(fingerprint,model_sha256,observed_at,status)
  VALUES(p->>'fingerprint',p->>'model_sha256',observed,'BUILDING') RETURNING id INTO k;
- -- Publication switches off previous knowledge immediately when a change is observed.
- UPDATE cbm_knowledge_head SET generation=k,status='BUILDING',verified_at=observed WHERE singleton;
+ -- Continue serving the last published generation until the replacement is complete.
+ UPDATE cbm_knowledge_head SET building_generation=k,verified_at=observed WHERE singleton;
  FOR d IN SELECT value FROM jsonb_array_elements(p->'chunks') LOOP
    IF d#>>'{metadata,chunk_id}' IS NULL OR d#>>'{metadata,ifc_global_id}' IS NULL
    OR coalesce(d#>>'{metadata,content_sha256}','') !~ '^[a-f0-9]{64}$'
@@ -92,17 +100,20 @@ DECLARE h cbm_knowledge_head; g cbm_knowledge_generations;
 BEGIN
  SELECT * INTO h FROM cbm_knowledge_head WHERE singleton FOR UPDATE;
  SELECT * INTO g FROM cbm_knowledge_generations WHERE id=k;
- IF h.generation IS DISTINCT FROM k OR h.status<>'BUILDING' OR g.fingerprint IS DISTINCT FROM fingerprint
+ IF h.building_generation IS DISTINCT FROM k OR g.status<>'BUILDING' OR g.fingerprint IS DISTINCT FROM fingerprint
  THEN RAISE EXCEPTION 'Superseded or mismatched build'; END IF;
- IF g.observed_at < clock_timestamp()-interval '5 minutes' THEN RAISE EXCEPTION 'Source verification expired; rerun sync'; END IF;
+ -- The workflow re-extracts and supplies the exact source fingerprint immediately
+ -- before publish. Lease permits the one-hour embedding execution.
+ IF g.observed_at < clock_timestamp()-interval '65 minutes' THEN RAISE EXCEPTION 'Source verification expired; rerun sync'; END IF;
  IF EXISTS(SELECT 1 FROM cbm_knowledge_sources s WHERE s.generation=k AND NOT EXISTS(
    SELECT 1 FROM cbm_knowledge_documents v WHERE v.metadata->>'generation'=k::text
    AND v.metadata->>'chunk_id'=s.chunk_id AND v.content=s.content AND v.metadata @> s.metadata))
  OR (SELECT count(*) FROM cbm_knowledge_sources WHERE generation=k)<>
     (SELECT count(*) FROM cbm_knowledge_documents WHERE metadata->>'generation'=k::text)
  THEN RAISE EXCEPTION 'Incomplete or altered vector build'; END IF;
+ UPDATE cbm_knowledge_generations SET status='SUPERSEDED' WHERE id=h.generation;
  UPDATE cbm_knowledge_generations SET status='READY',published_at=clock_timestamp() WHERE id=k;
- UPDATE cbm_knowledge_head SET status='READY' WHERE singleton;
+ UPDATE cbm_knowledge_head SET generation=k,building_generation=NULL,status='READY',verified_at=clock_timestamp() WHERE singleton;
  RETURN jsonb_build_object('status','READY','generation',k);
 END $$;
 

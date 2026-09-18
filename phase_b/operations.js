@@ -48,7 +48,7 @@ function facts(c) {
     now:now.toISOString(),urgent,max_live_offers:cap,active_offer_count:live.length,urgent_start:s.urgent_start,original_date:s.original_date,
     opening_status:opening,pending_response_count:pending.length,expired_offer_count:expired.length,next_wake:nextWake,
     available_candidate_ids:available,error:s.halted?s.error:null,
-    offers:offers.map(({token,...o})=>o),notices:notices.map(m=>({key:m.key,status:m.status,message_id:m.message_id||null})),
+    offers:offers.map(o=>({id:o.id,technician_id:o.technician_id,full_name:o.full_name,date:o.date,slot:o.slot,status:o.status,reserved_at:o.reserved_at,sent_at:o.sent_at,expires_at:o.expires_at,knowledge:{status:o.technical_knowledge?.status||'UNAVAILABLE',chunk_ids:(o.technical_knowledge?.chunks||[]).map(d=>d.metadata.chunk_id)}})),notices:notices.map(m=>({key:m.key,status:m.status,message_id:m.message_id||null})),
     candidates:s.shortlist.map(id=>{const v=candidates.find(x=>Number(x.technician_id)===id);return v?{technician_id:id,full_name:v.full_name,eligible:true,open_jobs:v.open_jobs,last_assigned_at:v.last_assigned_at,rating:v.rating}:{technician_id:id,eligible:false};})};
 }
 function finish(c) {
@@ -82,12 +82,13 @@ function technicalDetails(snapshot) {
 }
 function initialize(request,row) {
   const c=context(request,row);if(!c.ticket||c.state)return finish(c);
+  if(c.ticket.requires_dispatch_authorization&&!c.ticket.dispatch_authorized_at)return reject(c,'AWAITING_FM_AUTHORIZATION');
   if(terminal(c.ticket))return reject(c,'TICKET_ALREADY_TERMINAL');
-  const urgent=Number(c.ticket.severity)>=4,date=addDays(localDate(new Date(c.ticket.created_at)),urgent?1:2,true);
+  const urgent=Number(c.ticket.severity)>=4,date=addDays(localDate(new Date(c.ticket.dispatch_authorized_at || c.ticket.created_at)),urgent?1:2,true);
   c.state={version:2,source_key:request.sourceKey,status:c.ticket.status,urgent,cap:urgent?2:1,urgent_start:urgent?atRome(date,8).toISOString():null,original_date:date,
     shortlist:(row.candidates||[]).slice(0,5).map(x=>Number(x.technician_id)),offers:[],messages:{},response_cursor:0,audit:[],halted:false,failures:0,config:JSON.parse(JSON.stringify(request.config))};
-  audit(c,'DISPATCH_INITIALIZED');queue(c,'opening',c.config.fmEmail,`[CBM] New ticket #${c.ticket.id}: ${String(c.ticket.category||'').slice(0,80)}`,
-    `<h3>New maintenance ticket #${c.ticket.id}</h3>${details(c)}<p>Eligible technicians will now be contacted automatically.</p>`);return finish(c);
+  audit(c,'DISPATCH_INITIALIZED');queue(c,'opening',c.config.fmEmail,`[CBM] Dispatch started for approved ticket #${c.ticket.id}: ${String(c.ticket.category||'').slice(0,80)}`,
+    `<h3>Dispatch started for approved ticket #${c.ticket.id}</h3>${details(c)}<p>Eligible technicians will now be contacted automatically.</p>`);return finish(c);
 }
 function offer(request,row) {
   const c=context(request,row),s=c.state;if(!s)return finish(c);const f=facts(c);
@@ -131,7 +132,7 @@ function processEvents(request,row) {
     if(p.decision==='deny'){o.status='DENIED';audit(c,'OFFER_DENIED',{offer_id:o.id});continue;}if(p.decision!=='accept')continue;
     if(!(row.candidates||[]).some(x=>Number(x.technician_id)===o.technician_id)){o.status='INELIGIBLE';queue(c,`ineligible:${o.id}`,o.email,`[CBM] Ticket #${c.ticket.id}: offer withdrawn`,'<p>Your eligibility for this job has changed. This offer is no longer available.</p>');continue;}
     o.status='ACCEPTED';Object.assign(s,{status:'ASSIGNED',assignee:o.technician_id,scheduled_date:o.date,scheduled_slot:o.slot});audit(c,'OFFER_ACCEPTED',{offer_id:o.id,response_id:item.id,technician_id:o.technician_id});
-    queue(c,'assigned:technician',o.email,`[CBM] Confirmed - ticket #${c.ticket.id}`,`<p>The job is assigned to you for ${o.date}, ${o.slot} (Europe/Rome).</p><p>After completing the work, upload the after-photo to <b>02_completed_snapshots</b> as <b>TICKET-${c.ticket.id}_after.jpg</b>.</p>`);
+    queue(c,'assigned:technician',o.email,`[CBM] Confirmed - ticket #${c.ticket.id}`,`<p>The job is assigned to you for ${o.date}, ${o.slot} (Europe/Rome).</p><p>After completing the work, open the technician report link in this email. Complete the bilingual form and add an optional intervention photo. The form uploads one PDF for FM review.</p>`);
     queue(c,'assigned:fm',c.config.fmEmail,`[CBM] Ticket #${c.ticket.id} assigned`,`<p>${escapeHtml(o.full_name)} accepted for ${o.date}, ${o.slot} (Europe/Rome).</p><p>Other outstanding offers are withdrawn.</p>`);
     for(const other of s.offers.filter(x=>x.id!==o.id&&active(x))){other.status='WITHDRAWN';queue(c,`withdraw:${other.id}`,other.email,`[CBM] Ticket #${c.ticket.id}: offer withdrawn`,'<p>Another technician accepted this job. Your offer is no longer available; no action is required.</p>');}
   }
@@ -150,7 +151,11 @@ function acknowledge(request,row) {
   const o=s.offers.find(x=>x.id===m.offer_id);
   if(typeof r.message_id==='string'&&r.message_id){
     Object.assign(m,{status:'SENT',message_id:r.message_id,sent_at:c.now.toISOString()});
-    if(o&&active(o))Object.assign(o,{status:'LIVE',sent_at:c.now.toISOString(),expires_at:new Date(Math.min(c.now.getTime()+48*3600000,Number(c.ticket.severity)>=4?Date.parse(s.urgent_start):Infinity)).toISOString()});audit(c,'NOTICE_SENT',{key:m.key,message_id:r.message_id});
+    if(o&&active(o)){
+      const deadline=c.now.getTime()+48*3600000;
+      if(Number(c.ticket.severity)<4 && atRome(o.date,14).getTime()<=deadline+600000){o.status='UNCERTAIN';block(c,'Late Gmail acknowledgement: promised appointment overlaps the response deadline. Operator reconciliation required.');}
+      else Object.assign(o,{status:'LIVE',sent_at:c.now.toISOString(),expires_at:new Date(Math.min(deadline,Number(c.ticket.severity)>=4?Date.parse(s.urgent_start):Infinity)).toISOString()});
+    }audit(c,'NOTICE_SENT',{key:m.key,message_id:r.message_id});
   }else{m.status='UNCERTAIN';if(o&&active(o))o.status='UNCERTAIN';block(c,`Gmail delivery uncertain for ${m.key}. Inspect the provider before retrying.`);}return finish(c);
 }
 function failure(request,row) {
@@ -164,7 +169,7 @@ function dispatchPolicy(request,row) {
 }
 function operationSource(operation) {
   const common=[active,terminal,audit,block,context,facts,finish,reject];
-  const extra={initialize:[escapeHtml,queue,localDate,addDays,atRome,details],offer_next:[escapeHtml,queue,claim,localDate,addDays,atRome,details,technicalDetails],send_notices:[claim],process_events:[escapeHtml,queue],escalate:[escapeHtml,queue,details],ack:[],failure:[],read:[]};
+  const extra={initialize:[escapeHtml,queue,localDate,addDays,atRome,details],offer_next:[escapeHtml,queue,claim,localDate,addDays,atRome,details,technicalDetails],send_notices:[claim],process_events:[escapeHtml,queue],escalate:[escapeHtml,queue,details],ack:[atRome],failure:[],read:[]};
   return [...common,...extra[operation],operations[operation]].map(fn=>fn.toString().startsWith('function')?fn.toString():`const ${fn.name} = ${fn.toString()};`).join('\n\n')+`\nconst runOperation = ${operations[operation].name};`;
 }
 module.exports={dispatchPolicy,operationSource};

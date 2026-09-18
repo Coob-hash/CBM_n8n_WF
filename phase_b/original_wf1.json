@@ -3,7 +3,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Phase A - Intake & Localization\nDrive upload simulates the mobile app. Filename convention: `report_<reporterEmail>_<freetext>.jpg`.\nReplace before running: **folder ID** (node 1), **MultiSet Basic-auth credential** (node 4), **mapCode** (node 5), **IFC service URL** (node 7).\nCamera intrinsics are derived from the image in node 3 - override the CONFIG block there with your phone's real fx/fy/px/py.",
+        "content": "## Phase A · reviewed release 2026.09.14\nFilename: report_<reporterEmail>_<text>.jpg. Intrinsics come from EXIF via IFC_SERVICE_URL/captures/normalize; unsupported or untrusted captures require manual triage. Configure MULTISET_MAP_CODE, Drive folders and n8n credentials. Provider failures create NEEDS_TRIAGE tickets. The FM resume endpoint is documented in phase_b/README.md.",
         "width": 520,
         "height": 220,
         "color": 4
@@ -40,7 +40,13 @@
       "position": [
         -380,
         0
-      ]
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "REPLACE_DRIVE_CREDENTIAL_ID",
+          "name": "CBM Google Drive"
+        }
+      }
     },
     {
       "parameters": {
@@ -59,11 +65,17 @@
       "position": [
         -160,
         0
-      ]
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "REPLACE_DRIVE_CREDENTIAL_ID",
+          "name": "CBM Google Drive"
+        }
+      }
     },
     {
       "parameters": {
-        "jsCode": "// Prepare Image & Metadata\n// Turns the Drive binary into exactly what the MultiSet VPS query needs: a\n// normalized JPEG and the camera intrinsics that belong to those exact pixels.\n//\n// The pixel work runs in ifc_service (POST /captures/normalize) because it needs\n// Pillow, a compiled library that cannot run inside an n8n Code node. That is the\n// same reason /elements/nearest already lives there.\n//\n// The service reads FocalLengthIn35mmFilm from the photograph's own EXIF, bakes the\n// EXIF orientation into the pixels, and downscales to MultiSet's 1280 px limit. This\n// replaces the previous fixed-HFOV estimate, which assumed every photograph came from\n// a ~26 mm-equivalent lens, ignored the orientation tag entirely, and sent the image\n// at full resolution.\n\n// ---- CONFIG --------------------------------------------------------------\nlet IFC_SERVICE_URL = 'http://localhost:8000';\ntry { if ($env.IFC_SERVICE_URL) IFC_SERVICE_URL = $env.IFC_SERVICE_URL; } catch (e) { /* env access blocked */ }\nIFC_SERVICE_URL = IFC_SERVICE_URL.replace(/\\/+$/, '');\n\nconst LONG_SIDE = 1280;   // MultiSet's documented limit on the longer side\nconst HFOV_DEG  = 69;     // legacy estimate, fallback path only - always untrusted\n// --------------------------------------------------------------------------\n\nconst trg = $('Drive Trigger - New Snapshot').first().json;\nconst fileName = trg.name || 'report_unknown_object.jpg';\nconst buf = await this.helpers.getBinaryDataBuffer(0, 'data');\n\n// Retained only for the fallback path below: when the service cannot be reached we\n// still need a plausible frame size to keep the item well-formed.\nfunction imageSize(b) {\n  // PNG\n  if (b.length > 24 && b.toString('ascii', 12, 16) === 'IHDR') {\n    return { width: b.readUInt32BE(16), height: b.readUInt32BE(20) };\n  }\n  // JPEG: walk the marker segments until the SOFn frame header\n  if (b[0] !== 0xFF || b[1] !== 0xD8) return null;\n  let i = 2;\n  while (i < b.length - 9) {\n    if (b[i] !== 0xFF) { i++; continue; }\n    const marker = b[i + 1];\n    if (marker === 0xFF) { i++; continue; }\n    if (marker === 0x01 || (marker >= 0xD0 && marker <= 0xD9)) { i += 2; continue; }\n    const len = b.readUInt16BE(i + 2);\n    const isSOF = marker >= 0xC0 && marker <= 0xCF &&\n                  marker !== 0xC4 && marker !== 0xC8 && marker !== 0xCC;\n    if (isSOF) return { height: b.readUInt16BE(i + 5), width: b.readUInt16BE(i + 7) };\n    i += 2 + len;\n  }\n  return null;\n}\n\n// PoC filename convention: report_<reporterEmail>_<freeText>.jpg\nconst parts = fileName.replace(/\\.[^.]+$/, '').split('_');\nconst reporterEmail = (parts[1] && parts[1].includes('@')) ? parts[1] : 'unknown@reporter';\n\nlet frame;\ntry {\n  const res = await this.helpers.httpRequest({\n    method: 'POST',\n    url: IFC_SERVICE_URL + '/captures/normalize',\n    body: { imageB64: buf.toString('base64'), longSide: LONG_SIDE },\n    json: true,\n    timeout: 60000,\n  });\n  const cam = res.camera;\n  frame = {\n    width: cam.width,\n    height: cam.height,\n    fx: cam.fx, fy: cam.fy, px: cam.px, py: cam.py,\n    imageB64: res.imageB64,\n    intrinsicsSource: cam.source,\n    // false when K failed the plausibility gate. The Confidence Gate routes such a\n    // capture to manual triage: a wrong K still yields a confident-looking pose.\n    intrinsicsTrusted: cam.trusted === true,\n    orientationApplied: res.image.orientation_applied,\n    sourceWidth: res.image.source_width,\n    sourceHeight: res.image.source_height,\n    lens: cam.lens || null,\n    gateRejections: res.gate_rejections || [],\n    normalizeError: null,\n  };\n} catch (err) {\n  // The service is unreachable, or it refused the photograph (HTTP 422: no usable\n  // EXIF). Keep the item well-formed so the report still reaches a human, but mark\n  // it untrusted so it is never grounded against the IFC model.\n  const detail = (err && err.response && err.response.body && err.response.body.detail)\n    || (err && err.message) || String(err);\n  const size = imageSize(buf) || { width: 960, height: 720 };\n  const fx = Number(((size.width / 2) / Math.tan((HFOV_DEG * Math.PI / 180) / 2)).toFixed(4));\n  frame = {\n    width: size.width,\n    height: size.height,\n    fx, fy: fx, px: size.width / 2, py: size.height / 2,\n    imageB64: buf.toString('base64'),\n    intrinsicsSource: 'HFOV_FALLBACK',\n    intrinsicsTrusted: false,\n    orientationApplied: null,\n    sourceWidth: size.width,\n    sourceHeight: size.height,\n    lens: null,\n    gateRejections: [],\n    normalizeError: detail,\n  };\n}\n\nreturn [{\n  json: {\n    fileName,\n    reporterEmail,\n    photoUrl: trg.webViewLink || '',\n    ...frame,\n    // -> Vision LLM later on. Carries the normalized frame, so the vision step sees\n    // the same upright pixels MultiSet was asked about.\n    dataUri: 'data:image/jpeg;base64,' + frame.imageB64,\n  },\n  binary: $input.first().binary,\n}];"
+        "jsCode": "// Prepare Image & Metadata\n// Turns the Drive binary into exactly what the MultiSet VPS query needs: a\n// normalized JPEG and the camera intrinsics that belong to those exact pixels.\n//\n// The pixel work runs in ifc_service (POST /captures/normalize) because it needs\n// Pillow, a compiled library that cannot run inside an n8n Code node. That is the\n// same reason /elements/nearest already lives there.\n//\n// The service reads FocalLengthIn35mmFilm from the photograph's own EXIF, bakes the\n// EXIF orientation into the pixels, and downscales to MultiSet's 1280 px limit. This\n// replaces the previous fixed-HFOV estimate, which assumed every photograph came from\n// a ~26 mm-equivalent lens, ignored the orientation tag entirely, and sent the image\n// at full resolution.\n\n// ---- CONFIG --------------------------------------------------------------\nlet IFC_SERVICE_URL = ''; \ntry { if ($env.IFC_SERVICE_URL) IFC_SERVICE_URL = $env.IFC_SERVICE_URL; } catch (e) { /* env access blocked */ }\nIFC_SERVICE_URL = IFC_SERVICE_URL.replace(/\\/+$/, '');\n\nconst LONG_SIDE = 1280;   // MultiSet's documented limit on the longer side\nconst HFOV_DEG  = 69;     // legacy estimate, fallback path only - always untrusted\n// --------------------------------------------------------------------------\n\nconst trg = $('Drive Trigger - New Snapshot').first().json;\nconst fileName = trg.name || 'report_unknown_object.jpg';\nconst buf = await this.helpers.getBinaryDataBuffer(0, 'data');\n\n// Retained only for the fallback path below: when the service cannot be reached we\n// still need a plausible frame size to keep the item well-formed.\nfunction imageSize(b) {\n  // PNG\n  if (b.length > 24 && b.toString('ascii', 12, 16) === 'IHDR') {\n    return { width: b.readUInt32BE(16), height: b.readUInt32BE(20) };\n  }\n  // JPEG: walk the marker segments until the SOFn frame header\n  if (b[0] !== 0xFF || b[1] !== 0xD8) return null;\n  let i = 2;\n  while (i < b.length - 9) {\n    if (b[i] !== 0xFF) { i++; continue; }\n    const marker = b[i + 1];\n    if (marker === 0xFF) { i++; continue; }\n    if (marker === 0x01 || (marker >= 0xD0 && marker <= 0xD9)) { i += 2; continue; }\n    const len = b.readUInt16BE(i + 2);\n    const isSOF = marker >= 0xC0 && marker <= 0xCF &&\n                  marker !== 0xC4 && marker !== 0xC8 && marker !== 0xCC;\n    if (isSOF) return { height: b.readUInt16BE(i + 5), width: b.readUInt16BE(i + 7) };\n    i += 2 + len;\n  }\n  return null;\n}\n\n// PoC filename convention: report_<reporterEmail>_<freeText>.jpg\nconst parts = fileName.replace(/\\.[^.]+$/, '').split('_');\nconst reporterEmail = (parts[1] && parts[1].includes('@')) ? parts[1] : 'unknown@reporter';\n\nlet frame;\ntry {\n  const res = await this.helpers.httpRequest({\n    method: 'POST',\n    url: IFC_SERVICE_URL + '/captures/normalize',\n    body: { imageB64: buf.toString('base64'), longSide: LONG_SIDE },\n    json: true,\n    timeout: 60000,\n  });\n  const cam = res.camera;\n  frame = {\n    width: cam.width,\n    height: cam.height,\n    fx: cam.fx, fy: cam.fy, px: cam.px, py: cam.py,\n    imageB64: res.imageB64,\n    intrinsicsSource: cam.source,\n    // false when K failed the plausibility gate. The Confidence Gate routes such a\n    // capture to manual triage: a wrong K still yields a confident-looking pose.\n    intrinsicsTrusted: cam.trusted === true,\n    orientationApplied: res.image.orientation_applied,\n    sourceWidth: res.image.source_width,\n    sourceHeight: res.image.source_height,\n    lens: cam.lens || null,\n    gateRejections: res.gate_rejections || [],\n    normalizeError: null,\n  };\n} catch (err) {\n  // The service is unreachable, or it refused the photograph (HTTP 422: no usable\n  // EXIF). Keep the item well-formed so the report still reaches a human, but mark\n  // it untrusted so it is never grounded against the IFC model.\n  const detail = (err && err.response && err.response.body && err.response.body.detail)\n    || (err && err.message) || String(err);\n  const size = imageSize(buf) || { width: 960, height: 720 };\n  const fx = Number(((size.width / 2) / Math.tan((HFOV_DEG * Math.PI / 180) / 2)).toFixed(4));\n  frame = {\n    width: size.width,\n    height: size.height,\n    fx, fy: fx, px: size.width / 2, py: size.height / 2,\n    imageB64: buf.toString('base64'),\n    intrinsicsSource: 'HFOV_FALLBACK',\n    intrinsicsTrusted: false,\n    orientationApplied: null,\n    sourceWidth: size.width,\n    sourceHeight: size.height,\n    lens: null,\n    gateRejections: [],\n    normalizeError: detail,\n  };\n}\n\nreturn [{\n  json: {\n    fileName,\n    reporterEmail,\n    photoUrl: trg.webViewLink || '',\n    ...frame,\n    // -> Vision LLM later on. Carries the normalized frame, so the vision step sees\n    // the same upright pixels MultiSet was asked about.\n    dataUri: 'data:image/jpeg;base64,' + frame.imageB64,\n  },\n  binary: $input.first().binary,\n}];"
       },
       "name": "Prepare Image & Metadata",
       "type": "n8n-nodes-base.code",
@@ -101,10 +113,11 @@
       ],
       "credentials": {
         "httpBasicAuth": {
-          "id": "REPLACE_CRED_ID",
+          "id": "REPLACE_MULTISET_CREDENTIAL_ID",
           "name": "MultiSet M2M (clientId / clientSecret)"
         }
-      }
+      },
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
@@ -125,7 +138,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ mapCode: 'REPLACE_WITH_MULTISET_MAP_CODE', isRightHanded: false, width: $('Prepare Image & Metadata').first().json.width, height: $('Prepare Image & Metadata').first().json.height, fx: $('Prepare Image & Metadata').first().json.fx, fy: $('Prepare Image & Metadata').first().json.fy, px: $('Prepare Image & Metadata').first().json.px, py: $('Prepare Image & Metadata').first().json.py, queryImage: $('Prepare Image & Metadata').first().json.imageB64 }) }}",
+        "jsonBody": "={{ JSON.stringify({ mapCode: $env.MULTISET_MAP_CODE, isRightHanded: false, width: $('Prepare Image & Metadata').first().json.width, height: $('Prepare Image & Metadata').first().json.height, fx: $('Prepare Image & Metadata').first().json.fx, fy: $('Prepare Image & Metadata').first().json.fy, px: $('Prepare Image & Metadata').first().json.px, py: $('Prepare Image & Metadata').first().json.py, queryImage: $('Prepare Image & Metadata').first().json.imageB64 }) }}",
         "options": {
           "timeout": 60000
         }
@@ -136,7 +149,8 @@
       "position": [
         500,
         0
-      ]
+      ],
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
@@ -188,23 +202,31 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "=INSERT INTO tickets (status, reporter_email, photo_before_url, vps_confidence)\nVALUES ('NEEDS_TRIAGE', '{{ $('Prepare Image & Metadata').first().json.reporterEmail }}', '{{ $('Prepare Image & Metadata').first().json.photoUrl }}', {{ $json.confidence || 0 }})\nRETURNING id;",
-        "options": {}
+        "query": "INSERT INTO tickets (status,reporter_email,photo_before_url,vps_confidence) VALUES ('NEEDS_TRIAGE',$1,$2,$3) RETURNING id;",
+        "options": {
+          "queryReplacement": "={{ [$('Prepare Image & Metadata').first().json.reporterEmail,$('Prepare Image & Metadata').first().json.photoUrl,Number.isFinite($json.confidence)?$json.confidence:0] }}"
+        }
       },
       "name": "Create Triage Ticket",
       "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.4,
+      "typeVersion": 2.6,
       "position": [
         940,
         180
-      ]
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_POSTGRES_CREDENTIAL_ID",
+          "name": "CBM Postgres"
+        }
+      }
     },
     {
       "parameters": {
         "sendTo": "REPLACE_FM_EMAIL@example.com",
         "subject": "=[CBM] Ticket #{{ $json.id }} needs manual localization",
-        "emailType": "html",
-        "message": "=<p>A new fault report could not be localized automatically (low VPS confidence).</p><p>Photo: <a href=\"{{ $('Prepare Image & Metadata').first().json.photoUrl }}\">open</a><br/>Reporter: {{ $('Prepare Image & Metadata').first().json.reporterEmail }}</p><p>Please localize the object manually and re-dispatch. Ticket status: NEEDS_TRIAGE.</p>",
+        "emailType": "text",
+        "message": "=Ticket #{{ $json.id }} needs manual triage (localization, provider, or assessment failure). Review the capture and use the authenticated POST /cbm-wf1-resume endpoint documented in phase_b/README.md to set its element, skill, severity and description.",
         "options": {}
       },
       "name": "Notify FM - Manual Triage Needed",
@@ -213,12 +235,18 @@
       "position": [
         1160,
         180
-      ]
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "REPLACE_GMAIL_CREDENTIAL_ID",
+          "name": "CBM Gmail"
+        }
+      }
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "http://localhost:8000/elements/nearest",
+        "url": "={{ $env.IFC_SERVICE_URL.replace(/\\/+$/, '') + '/elements/nearest' }}",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ x: $json.position.x, y: $json.position.y, z: $json.position.z, max_distance: 3.0 }) }}",
@@ -241,22 +269,31 @@
       "position": [
         940,
         -160
-      ]
+      ],
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "=SELECT id FROM tickets WHERE ifc_global_id = '{{ $json.global_id }}' AND status NOT IN ('CLOSED','DUPLICATE') LIMIT 1;",
-        "options": {}
+        "query": "SELECT id FROM tickets WHERE ifc_global_id=$1 AND status NOT IN ('CLOSED','DUPLICATE') ORDER BY id LIMIT 1;",
+        "options": {
+          "queryReplacement": "={{ [$json.global_id || null] }}"
+        }
       },
       "name": "Check Duplicate",
       "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.4,
+      "typeVersion": 2.6,
       "position": [
         1160,
         -160
       ],
-      "alwaysOutputData": true
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_POSTGRES_CREDENTIAL_ID",
+          "name": "CBM Postgres"
+        }
+      }
     },
     {
       "parameters": {
@@ -291,16 +328,24 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "=INSERT INTO tickets (status, reporter_email, photo_before_url, ifc_global_id, ifc_class, description)\nVALUES ('DUPLICATE', '{{ $('Prepare Image & Metadata').first().json.reporterEmail }}', '{{ $('Prepare Image & Metadata').first().json.photoUrl }}', '{{ $('Find IFC Element').first().json.global_id }}', '{{ $('Find IFC Element').first().json.ifc_class }}', 'Duplicate of open ticket #{{ $json.id }}') RETURNING id;",
-        "options": {}
+        "query": "INSERT INTO tickets(status,reporter_email,photo_before_url,ifc_global_id,ifc_class,description) VALUES('DUPLICATE',$1,$2,$3,$4,$5) RETURNING id;",
+        "options": {
+          "queryReplacement": "={{ [$('Prepare Image & Metadata').first().json.reporterEmail,$('Prepare Image & Metadata').first().json.photoUrl,$('Find IFC Element').first().json.global_id,$('Find IFC Element').first().json.ifc_class,'Duplicate of open ticket #'+$json.id] }}"
+        }
       },
       "name": "Log Duplicate Report",
       "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.4,
+      "typeVersion": 2.6,
       "position": [
         1600,
         -40
-      ]
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_POSTGRES_CREDENTIAL_ID",
+          "name": "CBM Postgres"
+        }
+      }
     },
     {
       "parameters": {
@@ -314,10 +359,6 @@
         "headerParameters": {
           "parameters": [
             {
-              "name": "x-api-key",
-              "value": "REPLACE_WITH_ANTHROPIC_API_KEY_or_use_n8n_credential"
-            },
-            {
               "name": "anthropic-version",
               "value": "2023-06-01"
             },
@@ -326,7 +367,9 @@
               "value": "application/json"
             }
           ]
-        }
+        },
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "anthropicApi"
       },
       "name": "Vision Triage (Claude)",
       "type": "n8n-nodes-base.httpRequest",
@@ -334,11 +377,18 @@
       "position": [
         1600,
         -280
-      ]
+      ],
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "anthropicApi": {
+          "id": "REPLACE_ANTHROPIC_CREDENTIAL_ID",
+          "name": "CBM Anthropic"
+        }
+      }
     },
     {
       "parameters": {
-        "jsCode": "const raw = ($json.content && $json.content[0] && $json.content[0].text) || '{}';\nlet triage;\ntry { triage = JSON.parse(raw.replace(/```json|```/g, '').trim()); }\ncatch (e) { triage = { category: 'unknown', severity: 3, description: raw.slice(0, 180), required_skill: 'general' }; }\nconst loc  = $('MultiSet - Localize Snapshot').first().json;\nconst el   = $('Find IFC Element').first().json;\nconst meta = $('Prepare Image & Metadata').first().json;\nreturn [{ json: {\n  ...triage,\n  position: loc.position, confidence: loc.confidence,\n  mapCode: (loc.mapCodes || [])[0] || 'REPLACE_WITH_MULTISET_MAP_CODE',\n  element: el, reporterEmail: meta.reporterEmail, photoUrl: meta.photoUrl\n} }];"
+        "jsCode": "const loc=$('MultiSet - Localize Snapshot').first().json;\nconst element=$('Find IFC Element').first().json;\nconst meta=$('Prepare Image & Metadata').first().json;\nlet triage={},triageValid=false;\ntry {\n triage=JSON.parse(String($json.content?.find(x=>x.type==='text'||x.text)?.text||'').replace(/```json|```/g,'').trim());\n triageValid=Number.isInteger(triage.severity)&&triage.severity>=1&&triage.severity<=5\n && ['carpentry','plumbing','electrical','hvac','general'].includes(triage.required_skill)\n && typeof triage.category==='string'&&triage.category.trim().length>0\n && typeof triage.description==='string'&&triage.description.trim().length>0\n && !!element.global_id && element.found!==false && !!loc.position\n && [loc.position.x,loc.position.y,loc.position.z,loc.confidence].every(Number.isFinite);\n} catch {}\nconst map=Array.isArray(loc.mapCodes)?loc.mapCodes[0]:null;\nreturn [{json:{...triage,triageValid,position:loc.position,confidence:loc.confidence,\n mapCode:typeof map==='string'&&!map.includes('REPLACE')?map:null,\n element,reporterEmail:meta.reporterEmail,photoUrl:meta.photoUrl}}];"
       },
       "name": "Parse Triage JSON",
       "type": "n8n-nodes-base.code",
@@ -676,6 +726,13 @@
             "type": "main",
             "index": 0
           }
+        ],
+        [
+          {
+            "node": "Create Triage Ticket",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
@@ -684,6 +741,13 @@
         [
           {
             "node": "Confidence Gate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Triage Ticket",
             "type": "main",
             "index": 0
           }
@@ -723,7 +787,14 @@
       "main": [
         [
           {
-            "node": "Check Duplicate",
+            "node": "IFC Element Found?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Triage Ticket",
             "type": "main",
             "index": 0
           }
@@ -767,6 +838,13 @@
             "type": "main",
             "index": 0
           }
+        ],
+        [
+          {
+            "node": "Create Triage Ticket",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
@@ -774,7 +852,7 @@
       "main": [
         [
           {
-            "node": "Create Ticket",
+            "node": "Triage Valid?",
             "type": "main",
             "index": 0
           }
@@ -944,6 +1022,17 @@
         [
           {
             "node": "Offer Loop (one at a time)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Duplicate Report": {
+      "main": [
+        [
+          {
+            "node": "Notify Reporter - Duplicate",
             "type": "main",
             "index": 0
           }

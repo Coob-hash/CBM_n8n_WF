@@ -1,3 +1,5 @@
+> Historical design study. The 2026.09.14 release uses the legacy schema; see the root README and database/README.md.
+
 # CBM PostgreSQL database schema proposal
 
 Approved design baseline. The database implementation is now in `database/migrations/`; see [implementation and setup](../database/README.md) for the installed objects, transaction functions and validation limits. This document remains the approved logical design. The legacy `schema.sql` and existing workflow exports remain unchanged pending integration.
@@ -14,7 +16,7 @@ There are **27 tables**, including small reference and relationship tables. This
 
 ## Naming and common conventions
 
-- Each entity has a primary key `id`, unless a composite key is explicitly listed. Internal identifiers are bigint-compatible; ticket numbers continue to support filenames such as `TICKET-123_after.jpg`. Offers and approval requests also have an opaque unique public reference for callbacks.
+- Each entity has a primary key `id`, unless a composite key is explicitly listed. Internal identifiers are bigint-compatible; ticket numbers continue to support filenames such as `TICKET-123.pdf (mandatory report; optional TICKET-123.jpg photo)`. Offers and approval requests also have an opaque unique public reference for callbacks.
 - In the field lists below, `x -> table` means a foreign key. A question mark marks a relationship that can legitimately be absent. Lists show the important business fields, not every future SQL column declaration.
 - Instants use timezone-aware timestamps. Appointment start and end are stored as instants and displayed in `Europe/Rome`. Durations such as 48 hours are elapsed durations. The site timezone is retained with scheduling snapshots.
 - Mutable records have `created_at`, `updated_at` and a numeric `revision` where competing workflow writes are possible. Evidence, responses, delivery attempts and audit history are retained rather than overwritten.

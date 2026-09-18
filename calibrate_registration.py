@@ -1,48 +1,17 @@
-"""
-MultiSet map frame  ->  IFC project frame:  compute T_map->ifc
-=============================================================
-The VPS returns poses in the map's own frame; the IFC model lives in its own
-project frame. `ifc_service.py` bridges them with a single 4x4 rigid transform
-read from the MULTISET_TO_IFC_MATRIX environment variable. This script produces
-that matrix, and — more importantly — tells you how much to trust it.
+"""Fit a rigid transform between explicitly declared map and IFC coordinate frames.
 
-Two ways in
------------
-1. Cloud-to-cloud (preferred, centimetre-level).
-   MultiSet publishes every processed map as `PointCloud/map.pcd` (binary PCD,
-   XYZ at 5 cm spacing, right-handed, +Z up) on the Map Details page. Align it
-   against the survey scan the BIM was modelled on (the Leica .e57) in
-   CloudCompare: rough align with 4 picked point pairs, then Fine Registration
-   (ICP). CloudCompare prints the 4x4 in the console and can save it to a .txt.
-   Feed that file here:
+Use measured corresponding points and separate hold-out checks. A map derived
+from the same E57 is not automatically registered to its IFC. This case-study
+workflow requests MultiSet RHS Y-up positions in metres; fit directly from that
+frame to IFC project metres. The resulting matrix includes axis rotation.
 
-       python calibrate_registration.py --matrix cc_transform.txt
+For explicit LHS inputs, --left-handed mirrors X, following MultiSet documentation.
+Do not assume a downloaded cloud uses the same origin or axes without verifying
+its metadata. Fit/check residuals measure the supplied correspondences only;
+this script cannot certify camera calibration, object identity or field accuracy.
 
-   If the BIM was modelled on that same scan and never moved, T_scan->ifc is the
-   identity and you are done. Verify it: import the .e57 into the authoring tool
-   and check the cloud lands on the modelled walls. If it does not, register the
-   cloud to the model first and compose the two transforms with --compose.
-
-2. Point pairs (fallback, decimetre-level).
-   Measure >= 3 non-collinear points — ideally 5-6, spread across the whole
-   space and not all at the same height — in both frames, and list them in a
-   CSV. Then:
-
-       python calibrate_registration.py --pairs pairs.csv
-
-   CSV columns (a header row is optional):
-       label, map_x, map_y, map_z, ifc_x, ifc_y, ifc_z
-
-How good is good enough?
-------------------------
-Report the RMS this script prints. The threshold is set by how close together
-your maintainable elements are: you need the total error budget to stay well
-under half the distance between the two nearest ones. In `Base ufficio.ifc` the
-closest two doors are 1.20 m apart, so aim for RMS <= 0.15 m and treat anything
-above 0.30 m as unusable — widening `max_distance` in the workflow hides the
-problem instead of fixing it.
-
-Requires: numpy
+The case-study resolver uses registration.json; the generic environment output
+at the end of this utility is not its configuration interface.
 """
 
 from __future__ import annotations
@@ -68,6 +37,10 @@ def kabsch(A: np.ndarray, B: np.ndarray) -> np.ndarray:
     transform cannot express and which must be fixed upstream instead (see
     --left-handed).
     """
+    if not np.isfinite(A).all() or not np.isfinite(B).all():
+        raise ValueError("Correspondences must be finite")
+    if np.linalg.matrix_rank(A-A.mean(axis=0)) < 2 or np.linalg.matrix_rank(B-B.mean(axis=0)) < 2:
+        raise ValueError("Correspondences must not be collinear")
     ca, cb = A.mean(axis=0), B.mean(axis=0)
     H = (A - ca).T @ (B - cb)
     U, _, Vt = np.linalg.svd(H)
@@ -91,7 +64,7 @@ def residuals(T: np.ndarray, A: np.ndarray, B: np.ndarray) -> np.ndarray:
 # MultiSet queries default to isRightHanded=false, i.e. a left-handed Unity map
 # frame; the published map.pcd is right-handed +Z up. Mixing the two is the
 # classic "the fit is perfect but mirrored" symptom.
-FLIP_Z = np.diag([1.0, 1.0, -1.0, 1.0])
+FLIP_X = np.diag([-1.0, 1.0, 1.0, 1.0])
 
 
 # ---------------------------------------------------------------------------
@@ -144,7 +117,7 @@ def describe(T: np.ndarray) -> None:
     print(f"  rotation        {ang:.3f} deg total, {yaw:+.3f} deg about Z")
     print(f"  determinant     {np.linalg.det(R):+.6f}  (must be +1)")
     if np.linalg.det(R) < 0:
-        print("  !! reflection detected — the two frames differ in handedness.")
+        print("  !! reflection detected â€” the two frames differ in handedness.")
         print("     Re-export one side consistently, or pass --left-handed.")
 
 
@@ -162,7 +135,7 @@ def main() -> None:
                     help="Second 4x4 applied after the first, e.g. T_scan->ifc "
                          "when the BIM does not sit on the survey scan.")
     ap.add_argument("--left-handed", action="store_true",
-                    help="Negate Z on the map side first. Use when the poses "
+                    help="Negate X on the map side first. Use when the poses "
                          "come from queries with isRightHanded=false but the "
                          "matrix was computed from the right-handed map.pcd.")
     ap.add_argument("--check", type=Path,
@@ -174,7 +147,7 @@ def main() -> None:
 
     if args.pairs:
         labels, A, B = read_pairs(args.pairs)
-        T = kabsch(A, B)
+        T = kabsch(apply(FLIP_X, A) if args.left_handed else A, B)
         print(f"\nFitted on {len(A)} point pairs from {args.pairs.name}")
     else:
         T = read_matrix(args.matrix)
@@ -185,8 +158,8 @@ def main() -> None:
         T = read_matrix(args.compose) @ T
         print(f"Composed with {args.compose.name}")
     if args.left_handed:
-        T = T @ FLIP_Z
-        print("Applied left-handed map correction (Z negated on the map side)")
+        T = T @ FLIP_X
+        print("Applied left-handed map correction (X negated on the map side)")
 
     print("\nTransform")
     describe(T)
@@ -196,7 +169,7 @@ def main() -> None:
         r = residuals(T, A, B)
         rms = float(np.sqrt((r ** 2).mean()))
         worst = rms
-        print("\nFit residuals (in-sample — optimistic by construction)")
+        print("\nFit residuals (in-sample â€” optimistic by construction)")
         for lab, d in zip(labels, r):
             print(f"  {lab:<16} {d:7.4f} m")
         print(f"  {'RMS':<16} {rms:7.4f} m     max {r.max():.4f} m")
@@ -206,16 +179,16 @@ def main() -> None:
         r = residuals(T, Ac, Bc)
         rms = float(np.sqrt((r ** 2).mean()))
         worst = rms
-        print(f"\nHold-out residuals ({args.check.name} — report this one)")
+        print(f"\nHold-out residuals ({args.check.name} â€” report this one)")
         for lab, d in zip(labels_c, r):
             print(f"  {lab:<16} {d:7.4f} m")
         print(f"  {'RMS':<16} {rms:7.4f} m     max {r.max():.4f} m")
 
     if worst is not None:
         if worst <= args.tolerance:
-            print(f"\n  OK — RMS {worst:.4f} m is within {args.tolerance} m.")
+            print(f"\n  OK â€” RMS {worst:.4f} m is within {args.tolerance} m.")
         else:
-            print(f"\n  TOO COARSE — RMS {worst:.4f} m exceeds {args.tolerance} m.")
+            print(f"\n  TOO COARSE â€” RMS {worst:.4f} m exceeds {args.tolerance} m.")
             print("  Add better-spread correspondences, or register the clouds "
                   "instead of picking points by hand.")
 
@@ -223,7 +196,7 @@ def main() -> None:
     print("\nSet this before launching the service:")
     print(f"\n  PowerShell:  $env:MULTISET_TO_IFC_MATRIX = '{flat}'")
     print(f"  bash:        export MULTISET_TO_IFC_MATRIX='{flat}'")
-    print("\n  Leave AXIS_MODE=identity — this matrix already carries the axis swap.\n")
+    print("\n  Leave AXIS_MODE=identity â€” this matrix already carries the axis swap.\n")
 
 
 if __name__ == "__main__":

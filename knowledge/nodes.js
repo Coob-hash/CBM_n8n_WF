@@ -76,6 +76,6 @@ function knowledgeNodes({config,node,pg,code,condition,connect,id}) {
   connect(connections,'Preserve Source Chunk','Approved Document Loader',0,'ai_textSplitter');
   connect(connections,'Recheck Source Snapshot','Publish Complete Generation');
   return {tool,embedding,knowledgePg,workflow:{id:id('knowledge-sync'),name:'CBM - Synchronize IFC Technical Knowledge',
-    active:false,nodes,connections,settings:{executionOrder:'v1',timezone:'Europe/Rome',executionTimeout:300}}};
+    active:false,nodes,connections,settings:{executionOrder:'v1',timezone:'Europe/Rome',executionTimeout:3600,errorWorkflow:id('knowledge-errors')}}};
 }
 module.exports={knowledgeNodes,IDENTITY,OFFER,MODEL};

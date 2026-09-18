@@ -77,7 +77,7 @@ function buildSavedWorkflows({config,node,code,pg,condition,connect,id,knowledge
     const values={...bound};
     if(op==='offer_next'){
       values.technicianId='={{ $fromAI("technician_id", "The next unoffered eligible technician ID in the fixed shortlist returned by get_context", "number") }}';
-      values.knowledgeChunkIds='={{ $fromAI("knowledge_chunk_ids", "JSON array of up to three exact metadata.chunk_id strings selected from Radiator Technical Knowledge results for this ticket. Use [] when search is unavailable or no excerpt is relevant. Never invent IDs or send free-text specifications.", "string", "[]") }}';
+      values.knowledgeChunkIds='={{ $fromAI("knowledge_chunk_ids", "JSON array of up to three exact metadata.chunk_id strings selected from Approved Asset Knowledge results for this ticket. Use [] when search is unavailable or no excerpt is relevant. Never invent IDs or send free-text specifications.", "string", "[]") }}';
     }
     if(op==='send_notices')values.noticeKey='={{ $fromAI("notice_key", "Exact key of the pending notice selected from get_context, for example opening or assigned:fm", "string") }}';
     return node(name,'@n8n/n8n-nodes-langchain.toolWorkflow',{name,description,source:'database',workflowId:reference(op),workflowInputs:mapping(op,values)},2520+index*220,280,2.1);

@@ -6,7 +6,7 @@ const sql = require('./queries');
 const root = path.resolve(__dirname, '..');
 const workflowPath = path.join(root,'wf1_ticket_intake_and_dispatch.json');
 const backupPath = path.join(__dirname,'original_wf1.json');
-const originalHash = 'F6BD682EC53906052CF58C2DCC3FF0741EBE560032604E34A0C2092AF4E6D065';
+const originalHash = '7E983D13825F60005D6822F0BCD766D29369EAD21B817AEB3A43487BE6F640CB';
 if (!fs.existsSync(backupPath)) {
   const bytes = fs.readFileSync(workflowPath);
   if (crypto.createHash('sha256').update(bytes).digest('hex').toUpperCase() !== originalHash) throw new Error('WF1 differs from reviewed source; refusing to overwrite it.');
@@ -23,7 +23,11 @@ for (const n of original.nodes.slice(0,15)) {
 }
 const deploymentPath = process.argv[2] ? path.resolve(process.argv[2]) : path.join(__dirname,'deployment.example.json');
 const config = JSON.parse(fs.readFileSync(deploymentPath,'utf8'));
-// Preserve old private deployment files; merge new credential placeholders without rewriting them.
+for(const [key,value] of Object.entries(config)) {
+  if(key.endsWith('CredentialId') && typeof value==='string' && value.endsWith('.apps.googleusercontent.com'))
+    throw new Error(key+' must be an internal n8n credential ID, not a Google OAuth client ID.');
+}
+// Preserve old private deployment files; merge current credential references without rewriting them.
 config.knowledge={...JSON.parse(fs.readFileSync(path.join(__dirname,'deployment.example.json'),'utf8')).knowledge,...config.knowledge};
 const systemMessage = fs.readFileSync(path.join(__dirname,'system-message.txt'),'utf8');
 const id = name => crypto.createHash('sha256').update(`cbm-phase-b:${name}`).digest('hex').slice(0,32);
@@ -109,12 +113,16 @@ add(node('Note 2260x-120','n8n-nodes-base.stickyNote',{content:'## Phase B — A
 const formNode=w.nodes.find(n=>n.name==='Build Confirmation Form');
 const action=new URL(config.callbackBase.replace(/\/$/,'')+'/cbm-wf1-offer').href;
 formNode.parameters.jsCode=formNode.parameters.jsCode.replace('<form method="post">','<form method="post" action="'+action+'">');
+require('./review-additions')({w,config,node,code,pg,condition,connect,id});
 fs.writeFileSync(workflowPath,JSON.stringify(w,null,2)+'\n');
+require('../demo_ingestion/build');
 fs.writeFileSync(path.join(root,'knowledge','sync_workflow.json'),JSON.stringify(knowledge.workflow,null,2)+'\n');
 const helpersPath=path.join(__dirname,'workflows');
 fs.mkdirSync(helpersPath,{recursive:true});
-for(const [operation,workflow] of Object.keys(saved.definitions).map((op,i)=>[op,saved.workflows[i]]))
+for(const [operation,workflow] of Object.keys(saved.definitions).map((op,i)=>[op,saved.workflows[i]])) {
+  if(fs.existsSync(path.join(root,'technician_portal/apply.cjs')))require('../technician_portal/apply.cjs').apply(workflow);
   fs.writeFileSync(path.join(helpersPath,operation+'.json'),JSON.stringify(workflow,null,2)+'\n');
+}
 fs.writeFileSync(path.join(__dirname,'workflow-manifest.json'),JSON.stringify({
   main:'../wf1_ticket_intake_and_dispatch.json',
   knowledgeSync:'../knowledge/sync_workflow.json',

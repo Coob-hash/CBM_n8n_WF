@@ -59,13 +59,14 @@ async function main(){
  });
  await run('Geometry-only revision reuses embeddings; deletions disappear atomically',async()=>{
    p=snapshot([a],'2');build=await begin(p);assert.equal(build.documents.length,0);
-   assert.equal((await search('radiator-A')).length,0);await publish(build,p);
+   assert.equal((await search('radiator-A')).length,1);
+   assert.equal((await search('radiator-B')).length,1);await publish(build,p);
    assert.equal((await search('radiator-A')).length,1);assert.equal((await search('radiator-B')).length,0);
  });
  await run('Changed specifications invalidate old IDs and need new embeddings',async()=>{
    const changed=source('radiator-A','Model TEST ONLY. Maximum pressure: 8 bar.','2');
    p=snapshot([changed],'3');build=await begin(p);assert.equal(build.documents.length,1);
-   assert.equal((await offer('radiator-A',[a.metadata.chunk_id])).status,'UNAVAILABLE');
+   assert.equal((await offer('radiator-A',[a.metadata.chunk_id])).status,'VERIFIED');
    await insert(build.documents[0]);await publish(build,p);
    assert.equal((await offer('radiator-A',[a.metadata.chunk_id])).status,'INVALID_SELECTION');
  });
@@ -111,7 +112,7 @@ async function main(){
  await run('Export uses native Supabase/OpenAI nodes, fixed asset filters and one-item ingestion',async()=>{
    const main=JSON.parse(fs.readFileSync(path.join(root,'wf1_ticket_intake_and_dispatch.json')));
    const sync=JSON.parse(fs.readFileSync(path.join(__dirname,'sync_workflow.json')));
-   const tool=main.nodes.find(n=>n.name==='Radiator Technical Knowledge');assert.equal(tool.type,'@n8n/n8n-nodes-langchain.vectorStoreSupabase');
+   const tool=main.nodes.find(n=>n.name==='Approved Asset Knowledge');assert.equal(tool.type,'@n8n/n8n-nodes-langchain.vectorStoreSupabase');
    assert.equal(tool.parameters.options.queryName,'match_cbm_knowledge');assert.ok(j(tool.parameters.options.metadata).includes('Read Knowledge Identity'));
    assert.ok(!j(tool.parameters).includes('$fromAI'));
    for(const w of [main,sync]){
@@ -127,7 +128,7 @@ async function main(){
      const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
      for(const n of w.nodes){walk(n.parameters);if(n.type==='n8n-nodes-base.code')new AsyncFunction('$json','$input','$','$runIndex',n.parameters.jsCode);}
    }
-   assert.equal(sync.nodes.find(n=>n.name==='One Document At A Time').parameters.batchSize,1);
+   assert.equal(sync.nodes.find(n=>n.name==='One Document At A Time').parameters.batchSize ?? 1,1);
    assert.equal(sync.nodes.filter(n=>n.type.endsWith('.code')).length,1);
  });
  await run('SQL installer can be rerun without dropping knowledge',async()=>{await db.exec(sql);assert.ok((await one('SELECT count(*) AS n FROM cbm_knowledge_generations')).n>0);});

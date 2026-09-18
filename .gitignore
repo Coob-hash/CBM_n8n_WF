@@ -52,6 +52,9 @@ Thumbs.db
 *.bak
 *.bak-*
 
+technical_sheets/*
+!technical_sheets/README.md
+
 # Deliberately tracked: workflow exports, the required Phase A baseline,
 # configuration examples and validation report.
 ~$*

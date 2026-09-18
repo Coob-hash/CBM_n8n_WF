@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CBM Technician Submission",
+  "description": "Proposed application contract for a technician report. Completion is a technician declaration; FM approval and ticket status remain server-controlled.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "ticket_id", "work_date", "technician_name", "technician_email", "asset_name", "reported_issue", "findings", "work_performed", "checks", "check_result", "outcome", "remaining_issues", "declaration"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "ticket_id": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+    "work_date": {"type": "string", "format": "date"},
+    "technician_name": {"type": "string", "minLength": 1, "maxLength": 150},
+    "technician_email": {"type": "string", "format": "email", "maxLength": 254},
+    "location": {"type": "string", "maxLength": 250},
+    "asset_name": {"type": "string", "minLength": 1, "maxLength": 250},
+    "reported_issue": {"type": "string", "minLength": 1, "maxLength": 3000},
+    "findings": {"type": "string", "minLength": 1, "maxLength": 3000},
+    "work_performed": {"type": "string", "minLength": 20, "maxLength": 6000},
+    "materials": {"type": "string", "maxLength": 2000},
+    "checks": {"type": "string", "minLength": 1, "maxLength": 4000},
+    "check_result": {"enum": ["PASSED", "FAILED", "NOT_PERFORMED"]},
+    "outcome": {"enum": ["COMPLETED", "PARTIAL", "NOT_COMPLETED"]},
+    "remaining_issues": {"type": "string", "minLength": 1, "maxLength": 4000},
+    "declaration": {"const": true},
+    "photo": {
+      "type": "object", "additionalProperties": false,
+      "required": ["file_name", "mime_type", "caption"],
+      "properties": {
+        "file_name": {"type": "string", "pattern": "^TICKET-[1-9][0-9]*\\.jpg$"},
+        "mime_type": {"const": "image/jpeg"},
+        "caption": {"type": "string", "minLength": 1, "maxLength": 500},
+        "attachment_id": {"type": "string", "minLength": 1, "description": "Assigned by the server after attachment upload."}
+      }
+    }
+  }
+}
