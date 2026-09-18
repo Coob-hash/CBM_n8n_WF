@@ -23,7 +23,7 @@ services:
       TZ: Europe/Rome
       N8N_RUNNERS_MODE: external
       N8N_RUNNERS_BROKER_LISTEN_ADDRESS: 0.0.0.0
-      N8N_RUNNERS_AUTH_TOKEN: ${CBM_RUNNERS_AUTH_TOKEN:?Run Initialize-Cbm.ps1}
+      N8N_RUNNERS_AUTH_TOKEN: ${CBM_RUNNERS_AUTH_TOKEN:?Run scripts/deployment/Initialize-Cbm.ps1}
       N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
       N8N_RESTRICT_FILE_ACCESS_TO: /files
       NODE_FUNCTION_ALLOW_EXTERNAL: pdf-parse
@@ -45,7 +45,7 @@ services:
     restart: unless-stopped
     environment:
       N8N_RUNNERS_TASK_BROKER_URI: http://n8n:5679
-      N8N_RUNNERS_AUTH_TOKEN: ${CBM_RUNNERS_AUTH_TOKEN:?Run Initialize-Cbm.ps1}
+      N8N_RUNNERS_AUTH_TOKEN: ${CBM_RUNNERS_AUTH_TOKEN:?Run scripts/deployment/Initialize-Cbm.ps1}
       GENERIC_TIMEZONE: Europe/Rome
     depends_on:
       - n8n
@@ -66,7 +66,7 @@ services:
     environment:
       POSTGRES_DB: cbm_demo
       POSTGRES_USER: cbm_app
-      POSTGRES_PASSWORD: ${CBM_POSTGRES_PASSWORD:?Run Initialize-Cbm.ps1}
+      POSTGRES_PASSWORD: ${CBM_POSTGRES_PASSWORD:?Run scripts/deployment/Initialize-Cbm.ps1}
     volumes:
       - cbm_case_postgres:/var/lib/postgresql/data
       - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
@@ -126,7 +126,7 @@ services:
       IFC_MODEL_DIR: /app/models
       CBM_CASE_STUDY_DIR: /app/case-study
       CBM_KNOWLEDGE_CATALOG: /app/knowledge-local/catalog.local.json
-      CBM_KNOWLEDGE_KEY: ${CBM_KNOWLEDGE_KEY:?Run Initialize-Cbm.ps1}
+      CBM_KNOWLEDGE_KEY: ${CBM_KNOWLEDGE_KEY:?Run scripts/deployment/Initialize-Cbm.ps1}
     volumes:
       - cbm_case_models:/app/models:ro
       - ./cbm/case-study:/app/case-study:ro

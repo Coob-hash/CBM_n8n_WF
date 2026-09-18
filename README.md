@@ -1,6 +1,6 @@
 # Current update: Single-ticket dispatch and one vision pass, 16 September 2026
 
-Start with [READ-ME-SINGLE-TICKET.md](READ-ME-SINGLE-TICKET.md) for the simplified source workflow. [READ-ME-DISPATCH.md](READ-ME-DISPATCH.md) explains the preserved A-D fixes and context; [READ-ME-OPENROUTER.md](READ-ME-OPENROUTER.md) explains the models. The earlier deployment instructions below describe the base intake release.
+Start with [READ-ME-SINGLE-TICKET.md](docs/dispatch/READ-ME-SINGLE-TICKET.md) for the simplified source workflow. [READ-ME-DISPATCH.md](docs/dispatch/READ-ME-DISPATCH.md) explains the preserved A-D fixes and context; [READ-ME-OPENROUTER.md](docs/wf1/READ-ME-OPENROUTER.md) explains the models. The earlier deployment instructions below describe the base intake release.
 
 ---
 
@@ -13,10 +13,23 @@ This separate release extends the Maddaloni case-study demo with the agreed proc
 - A persistent bug issue and IT notification after the fourth failed capture. IT defaults to giuseppe.desiderio123@gmail.com.
 - Mandatory FM authorization before dispatch; rejection contacts no technician. WF2 completion acceptance remains separate.
 
-Start with [INTAKE_APPROVAL_GUIDE.md](<C:/Users/USER/Desktop/n8n_deploy/INTAKE_APPROVAL_GUIDE.md>), then [CBM_Demo_Tutorial.md](<C:/Users/USER/Desktop/n8n_deploy/CBM_Demo_Tutorial.md>) for every workflow and trigger. [CASE_STUDY_GUIDE.md](<C:/Users/USER/Desktop/n8n_deploy/CASE_STUDY_GUIDE.md>) retains the IFC, E57, photo and intrinsics audit.
+Start with [INTAKE_APPROVAL_GUIDE.md](docs/guides/INTAKE_APPROVAL_GUIDE.md), then [CBM_Demo_Tutorial.md](docs/guides/CBM_Demo_Tutorial.md) for every workflow and trigger. [CASE_STUDY_GUIDE.md](docs/guides/CASE_STUDY_GUIDE.md) retains the IFC, E57, photo and intrinsics audit.
 
-The deployment uses the existing n8n/ngrok configuration and case-study volumes. Apply-CbmIntakeMigration.ps1 backs up and updates the existing database; installing or restarting an existing PostgreSQL container alone does not apply initialization SQL. The installer backs up the prior deployment and preserves private configuration, catalog and registration. Workflow imports are separate, inactive templates with a new ID namespace.
+The deployment uses the existing n8n/ngrok configuration and case-study volumes. `scripts/deployment/Apply-CbmIntakeMigration.ps1` backs up and updates the existing database; installing or restarting an existing PostgreSQL container alone does not apply initialization SQL. The installer backs up the prior deployment and preserves private configuration, catalog and registration. Workflow imports are separate, inactive templates with a new ID namespace.
 
 The source IFC/photos and all previous source releases remain unchanged. The existing dispatch helpers are retained, with appointment timing anchored to FM authorization; WF3 excludes rejected requests from open totals. No new Python dependency, container, mobile app or external issue-tracker integration is required for the application. The mock provider container exists only in isolated tests.
 
-Validation includes real-IFC offline checks, PostgreSQL concurrency/approval tests and an isolated n8n run with simulated providers/mail. Actual MultiSet localization, map-to-IFC registration and vision accuracy remain to be validated using live credentials and measured correspondences. See DEPLOYMENT_STATUS.md for installed state.
+Validation includes real-IFC offline checks, PostgreSQL concurrency/approval tests and an isolated n8n run with simulated providers/mail. Actual MultiSet localization, map-to-IFC registration and vision accuracy remain to be validated using live credentials and measured correspondences. See [DEPLOYMENT_STATUS.md](docs/guides/DEPLOYMENT_STATUS.md) for installed state.
+
+## Repository layout
+
+| Path | Contents |
+| --- | --- |
+| `docker-compose.yml`, `Dockerfile` | The n8n deployment and its CBM services |
+| [`scripts/`](scripts/README.md) | PowerShell and Python operator scripts, grouped by task and workflow |
+| [`database/`](database/README.md) | All source SQL: base schemas, migrations and per-workflow additions |
+| `docs/` | Guides (`docs/guides/`) and per-workflow notes (`docs/wf1/`, `docs/dispatch/`, `docs/wf2/`, `docs/wf3/`) |
+| `cbm/app/` | Application: workflow exports, builders, services and tests |
+| `cbm/` | Deployment overlays: intake, dispatch queue, OpenRouter, case study, templates |
+
+Run scripts from any directory; each one resolves the repository root itself, for example `.\scripts\deployment\Start-Cbm.ps1`.
