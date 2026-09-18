@@ -1,0 +1,6 @@
+FROM n8nio/runners:2.29.9@sha256:a0907ce35b2654ef83a42318be11a73a807a9fa88f23d9e670803551bdfe365e
+USER root
+RUN mkdir -p /opt/cbm-js && cd /opt/cbm-js && pnpm add --save-exact pdf-parse@2.4.5
+RUN ln -s /opt/cbm-js/node_modules/pdf-parse /opt/runners/task-runner-javascript/node_modules/pdf-parse
+COPY task-runners.json /etc/n8n-task-runners.json
+USER runner

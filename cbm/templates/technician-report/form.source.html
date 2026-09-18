@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CBM | Rapporto del tecnico · Technician report</title>
+<style>
+:root{font-family:Arial,Helvetica,sans-serif;color:#23384b;background:#edf2f6;font-size:15px;line-height:1.5}*{box-sizing:border-box}body{margin:0}main{max-width:980px;margin:28px auto;padding:0 18px 40px}.brand{font-size:11px;font-weight:700;letter-spacing:1.6px;color:#aac5d6}.hero{background:#18334d;color:white;padding:30px 32px;border-top:4px solid #75b4a2;border-radius:12px 12px 0 0}h1{margin:10px 0 0;font-size:29px;line-height:1.2}.subtitle{margin:8px 0 0;color:#d1e0ea;font-size:17px}.intro{background:white;padding:22px 32px;border-bottom:1px solid #e2e8f0}.intro p{margin:0 0 7px}.en{display:block;color:#66798a;font-size:12px;font-weight:400;line-height:1.5}.intro .en{font-size:13px}.required-note{font-size:12px;margin-top:12px!important;color:#657a8c}form{background:white;padding:0 32px 28px;border-radius:0 0 12px 12px}fieldset{border:0;border-bottom:1px solid #e1e8ed;padding:25px 0;margin:0;min-width:0}legend{float:left;width:100%;font-size:18px;font-weight:700;margin:0 0 20px;padding:0}.section-title{display:flex;gap:12px;align-items:center}.num{width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;background:#eaf1f6;border-radius:50%;font-size:13px}.fields{clear:both}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.field{margin-bottom:17px}label{display:block;font-weight:700;font-size:13px;margin-bottom:6px}input:not([type=checkbox]),textarea,select{width:100%;font:inherit;font-size:14px;color:#23384b;border:1px solid #bccbd6;border-radius:6px;background:white;padding:10px 12px;min-height:43px}input:focus,textarea:focus,select:focus,button:focus-visible,a:focus-visible{outline:3px solid #a9d4ea;outline-offset:2px;border-color:#326b97}textarea{resize:vertical;min-height:88px;line-height:1.55}.help{margin:5px 0 0;color:#66798a;font-size:12px}.wide{grid-column:1/-1}.upload{background:#f7fafc;border:1px dashed #a7becd;border-radius:8px;padding:18px}.photo-frame{margin-top:18px}.photo-frame img{display:block;max-width:100%;max-height:340px;margin:0 auto;object-fit:contain;border-radius:6px}.photo-meta{font-size:12px;color:#66798a;margin:10px 0}.check-label{display:flex;align-items:flex-start;gap:10px;font-weight:400}.check-label input{width:19px;height:19px;margin:3px 0 0;flex:none;accent-color:#256c5a}.actions{padding-top:24px;display:flex;gap:10px;flex-wrap:wrap}button{font:inherit;font-size:14px;font-weight:700;border-radius:6px;padding:12px 18px;border:1px solid #18334d;background:#18334d;color:white;cursor:pointer}button.secondary{background:white;color:#18334d;border-color:#bccbd6}button:disabled{opacity:.45;cursor:not-allowed}.remove{padding:7px 12px;font-size:12px}#status{margin:14px 0 0;min-height:22px;font-size:13px}#status.error{color:#a62e2e}.demo{margin-top:22px;padding-top:18px;border-top:1px solid #e2e8f0;font-size:12px;color:#596f82}.demo p{margin:6px 0}.demo strong{color:#23384b}.privacy{font-size:12px;color:#66798a;margin:15px 0 0}.privacy .en{font-size:11px}[hidden]{display:none!important}@media(max-width:620px){main{margin:12px auto;padding:0 10px 25px}.hero{padding:24px 20px}h1{font-size:25px}.intro{padding:20px}form{padding:0 20px 24px}.grid{grid-template-columns:1fr;gap:0}button{width:100%}.remove{width:auto}.section-title{align-items:flex-start}} 
+</style></head><body><main>
+<header class="hero"><div class="brand">CBM / TECHNICIAN SUBMISSION</div><h1>Rapporto di intervento</h1><p class="subtitle" lang="en">Maintenance intervention report</p></header>
+<div class="intro"><p>Descrivi il lavoro eseguito e le verifiche effettuate. Puoi allegare una foto del risultato.</p><p class="en" lang="en">Describe the work performed and the checks completed. You may attach a photo of the result.</p><p class="required-note">* Campo obbligatorio / Required field. La chiusura del ticket richiede l'approvazione del Facility Manager.<br><span lang="en">Ticket closure requires Facility Manager approval.</span></p></div>
+<form id="report-form">
+<fieldset><legend><span class="section-title"><span class="num">1</span><span>Riferimenti dell'intervento<span class="en" lang="en">Intervention details</span></span></span></legend><div class="fields grid">
+<div class="field"><label for="ticket_id">Numero ticket *<span class="en" lang="en">Ticket number</span></label><input id="ticket_id" name="ticket_id" type="number" min="1" max="2147483647" step="1" required inputmode="numeric" placeholder="42"></div>
+<div class="field"><label for="work_date">Data dell'intervento *<span class="en" lang="en">Work date</span></label><input id="work_date" name="work_date" type="date" required></div>
+<div class="field"><label for="technician_name">Nome del tecnico *<span class="en" lang="en">Technician name</span></label><input id="technician_name" name="technician_name" maxlength="150" required autocomplete="name"></div>
+<div class="field"><label for="technician_email">Email del tecnico *<span class="en" lang="en">Technician email</span></label><input id="technician_email" name="technician_email" type="email" maxlength="254" required autocomplete="email"></div>
+<div class="field"><label for="location">Edificio e locale<span class="en" lang="en">Building and room</span></label><input id="location" name="location" maxlength="250"></div>
+<div class="field"><label for="asset_name">Oggetto o impianto *<span class="en" lang="en">Asset or equipment</span></label><input id="asset_name" name="asset_name" maxlength="250" required></div>
+<div class="field wide"><label for="reported_issue">Problema segnalato nel ticket *<span class="en" lang="en">Issue reported in the ticket</span></label><textarea id="reported_issue" name="reported_issue" maxlength="3000" required></textarea></div>
+</div></fieldset>
+<fieldset><legend><span class="section-title"><span class="num">2</span><span>Lavoro eseguito<span class="en" lang="en">Work performed</span></span></span></legend><div class="fields">
+<div class="field"><label for="findings">Condizioni riscontrate e causa, se nota *<span class="en" lang="en">Observed condition and cause, if known</span></label><textarea id="findings" name="findings" maxlength="3000" required aria-describedby="findings-help"></textarea><p id="findings-help" class="help">Descrivi ciò che hai osservato; indica se la causa è incerta. / Describe what you observed; state if the cause is uncertain.</p></div>
+<div class="field"><label for="work_performed">Operazioni eseguite *<span class="en" lang="en">Actions performed</span></label><textarea id="work_performed" name="work_performed" rows="5" minlength="20" maxlength="6000" required aria-describedby="work-help"></textarea><p id="work-help" class="help">Indica componenti interessati e attività svolte. / Identify the affected components and describe the work.</p></div>
+<div class="field"><label for="materials">Materiali e ricambi utilizzati<span class="en" lang="en">Materials and replacement parts</span></label><textarea id="materials" name="materials" maxlength="2000" aria-describedby="materials-help"></textarea><p id="materials-help" class="help">Nome, quantità e riferimento se disponibile; scrivi “Nessuno” se non utilizzati. / Name, quantity and reference if available; write “None” if unused.</p></div>
+</div></fieldset>
+<fieldset><legend><span class="section-title"><span class="num">3</span><span>Verifiche ed esito<span class="en" lang="en">Checks and outcome</span></span></span></legend><div class="fields">
+<div class="field"><label for="checks">Verifiche eseguite e risultati osservati *<span class="en" lang="en">Checks performed and observed results</span></label><textarea id="checks" name="checks" maxlength="4000" required aria-describedby="checks-help"></textarea><p id="checks-help" class="help">Se non eseguite, spiega il motivo. / If no checks were performed, explain why.</p></div>
+<div class="grid"><div class="field"><label for="check_result">Esito delle verifiche *<span class="en" lang="en">Check result</span></label><select id="check_result" name="check_result" required><option value="">Seleziona / Select</option><option value="PASSED">Superate / Passed</option><option value="FAILED">Non superate / Failed</option><option value="NOT_PERFORMED">Non eseguite / Not performed</option></select></div>
+<div class="field"><label for="outcome">Esito dichiarato dal tecnico *<span class="en" lang="en">Technician-declared outcome</span></label><select id="outcome" name="outcome" required><option value="">Seleziona / Select</option><option value="COMPLETED">Completato / Completed</option><option value="PARTIAL">Parziale / Partially completed</option><option value="NOT_COMPLETED">Non completato / Not completed</option></select></div></div>
+<div class="field"><label for="remaining_issues">Problemi residui, limitazioni e prossime azioni *<span class="en" lang="en">Remaining issues, limitations and next actions</span></label><textarea id="remaining_issues" name="remaining_issues" maxlength="4000" required aria-describedby="remaining-help"></textarea><p id="remaining-help" class="help">Indica ciò che resta da fare, oppure “Nessuno”. / State what remains to be done, or write “None”.</p></div>
+</div></fieldset>
+<fieldset><legend><span class="section-title"><span class="num">4</span><span>Foto dell'intervento <span style="font-weight:400;font-size:13px">(facoltativa)</span><span class="en" lang="en">Intervention photo (optional)</span></span></span></legend><div class="fields">
+<div class="upload"><label for="photo">Aggiungi una foto DOPO l'intervento<span class="en" lang="en">Add an AFTER photo</span></label><input id="photo" type="file" accept="image/jpeg,image/png,image/webp" aria-describedby="photo-help"><p id="photo-help" class="help">JPG, PNG o WebP, massimo 10 MB. Mostra lo stesso oggetto del ticket e il risultato dell'intervento.<br><span lang="en">JPG, PNG or WebP, up to 10 MB. Show the ticket's asset and the result of the intervention.</span></p></div>
+<div id="photo-frame" class="photo-frame" hidden><img id="photo-preview" alt="Anteprima della foto allegata / Attached photo preview"><p id="photo-meta" class="photo-meta"></p><button id="remove-photo" type="button" class="secondary remove">Rimuovi foto / Remove photo</button>
+<div class="field" style="margin-top:16px"><label for="photo_caption">Descrizione della foto *<span class="en" lang="en">Photo caption</span></label><input id="photo_caption" name="photo_caption" maxlength="500" aria-describedby="caption-help"><p id="caption-help" class="help">Spiega cosa mostra la foto. / Explain what the photo shows.</p></div></div>
+</div></fieldset>
+<fieldset><legend><span class="section-title"><span class="num">5</span><span>Conferma del tecnico<span class="en" lang="en">Technician confirmation</span></span></span></legend><div class="fields"><label class="check-label" for="declaration"><input id="declaration" name="declaration" type="checkbox" required><span>Confermo che il rapporto descrive il lavoro e le verifiche effettivamente eseguiti. *<span class="en" lang="en">I confirm that this report describes the work and checks actually performed.</span></span></label></div></fieldset>
+<div class="actions"><button id="download-pdf" type="submit">Scarica rapporto PDF / Download report PDF</button><button id="download-photo" type="button" class="secondary" disabled>Copia foto JPG (facoltativa) / JPG copy (optional)</button></div>
+<p id="status" role="status" aria-live="polite"></p>
+<div class="demo"><strong>Utilizzo nella demo WF2 / Using this with the WF2 demo</strong><p>Carica <strong>TICKET-&lt;id&gt;.pdf</strong> nella cartella Drive dei completamenti. La foto, se aggiunta, è già inclusa nel PDF.</p><p lang="en">Upload <strong>TICKET-&lt;id&gt;.pdf</strong> to the completed-files Drive folder. The optional photo is included in the PDF and extracted automatically by WF2. The JPG download is only an optional personal copy.</p></div>
+<p class="privacy">Questo modulo crea file sul tuo dispositivo. Non invia dati e non modifica il ticket. I dati non vengono salvati dopo la chiusura o il ricaricamento della pagina.<span class="en" lang="en">This form creates files on your device. It does not submit data or change the ticket. Data is not retained after closing or reloading the page.</span></p>
+</form></main>
+<!-- PDF_LIBRARY -->
+<!-- PDF_RENDERER -->
+<script>
+'use strict';
+const form=document.getElementById('report-form'),statusBox=document.getElementById('status');
+let photoData=null,photoBusy=false,photoEpoch=0;
+function status(message,error=false){statusBox.textContent=message;statusBox.className=error?'error':'';}
+function clearPhoto(){photoEpoch++;photoData=null;photoBusy=false;document.getElementById('photo').value='';document.getElementById('photo-preview').removeAttribute('src');document.getElementById('photo-frame').hidden=true;document.getElementById('photo_caption').required=false;document.getElementById('photo_caption').value='';document.getElementById('download-photo').disabled=true;}
+function download(bytes,name,type){const url=URL.createObjectURL(new Blob([bytes],{type})),a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);}
+document.getElementById('remove-photo').addEventListener('click',()=>{clearPhoto();status('Foto rimossa / Photo removed.');});
+document.getElementById('photo').addEventListener('change',async(e)=>{
+ const file=e.target.files[0];const epoch=++photoEpoch;photoData=null;photoBusy=true;document.getElementById('download-photo').disabled=true;document.getElementById('photo-frame').hidden=true;
+ document.getElementById('photo_caption').required=false;
+ if(!file){clearPhoto();return;}
+ try{
+  if(!['image/jpeg','image/png','image/webp'].includes(file.type))throw new Error('Usa JPG, PNG o WebP / Use JPG, PNG or WebP.');
+  if(file.size>10*1024*1024)throw new Error('Foto oltre 10 MB / Photo exceeds 10 MB.');
+  status('Preparazione foto / Preparing photo...');
+  const url=URL.createObjectURL(file),img=new Image();
+  try{await new Promise((resolve,reject)=>{img.onload=resolve;img.onerror=()=>reject(new Error('Impossibile leggere la foto / Cannot read this image.'));img.src=url;});
+   if(epoch!==photoEpoch)return;
+   const scale=Math.min(1,1600/Math.max(img.naturalWidth,img.naturalHeight));
+   const canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(img.naturalWidth*scale));canvas.height=Math.max(1,Math.round(img.naturalHeight*scale));
+   const ctx=canvas.getContext('2d');ctx.fillStyle='#ffffff';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.drawImage(img,0,0,canvas.width,canvas.height);
+   photoData=canvas.toDataURL('image/jpeg',.86);
+  }finally{URL.revokeObjectURL(url);}
+  if(epoch!==photoEpoch)return;
+  document.getElementById('photo-preview').src=photoData;document.getElementById('photo-frame').hidden=false;
+  document.getElementById('photo-meta').textContent=file.name+' · JPG per il rapporto / JPG for the report';
+  document.getElementById('photo_caption').required=true;document.getElementById('download-photo').disabled=false;
+  status('Foto pronta. Aggiungi una descrizione / Photo ready. Add a caption.');
+ }catch(err){if(epoch===photoEpoch){clearPhoto();status(err.message,true);}}
+ finally{if(epoch===photoEpoch)photoBusy=false;}
+});
+function ticketNumber(){const el=document.getElementById('ticket_id');if(!el.reportValidity())return null;return el.value;}
+document.getElementById('download-photo').addEventListener('click',()=>{const id=ticketNumber();if(!id||!photoData)return;const bytes=Uint8Array.from(atob(photoData.split(',')[1]),c=>c.charCodeAt(0));download(bytes,'TICKET-'+id+'.jpg','image/jpeg');status('Foto scaricata / Photo downloaded.');});
+form.addEventListener('submit',async(e)=>{
+ e.preventDefault();if(photoBusy){status('Attendi la preparazione della foto / Wait for the photo to finish processing.',true);return;}
+ const values=Object.fromEntries(new FormData(form));for(const k in values)if(typeof values[k]==='string')values[k]=values[k].trim();
+ for(const el of form.querySelectorAll('[required]')){if(el.type!=='checkbox'&&!el.value.trim()){el.focus();status('Compila i campi obbligatori / Complete the required fields.',true);return;}}
+ values.ticket_id=Number(values.ticket_id);values.declaration=true;
+ const button=document.getElementById('download-pdf');button.disabled=true;status('Creazione PDF / Creating PDF...');
+ try{const bytes=await CBMReport.createReport(values,photoData);download(bytes,'TICKET-'+values.ticket_id+'.pdf','application/pdf');status('PDF scaricato. Il ticket è ancora da valutare dal FM / PDF downloaded. The ticket still requires FM review.');}
+ catch(err){status('Impossibile creare il PDF / Could not create the PDF: '+err.message,true);}
+ finally{button.disabled=false;}
+});
+</script></body></html>

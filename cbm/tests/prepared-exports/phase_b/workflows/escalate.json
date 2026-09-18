@@ -1,0 +1,294 @@
+{
+  "name": "[CBM Intake Approval 2026.09.15] Dispatch - Escalate Ticket",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "ticketId",
+              "type": "string"
+            },
+            {
+              "name": "sourceKey",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "c2b711178f83a77ba4f9bc859fa1a73d",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nWITH target AS (\n SELECT t.* FROM tickets t WHERE\n (NULLIF($1::jsonb->>'ticketId','') IS NOT NULL AND t.id=(NULLIF($1::jsonb->>'ticketId',''))::int)\n OR (NULLIF($1::jsonb->>'ticketId','') IS NULL AND EXISTS (\n SELECT 1 FROM ticket_events s WHERE s.ticket_id=t.id AND s.event='CBM_SOURCE' AND s.payload->>'source_key'=$1::jsonb->>'sourceKey'))\n ORDER BY t.id LIMIT 1\n)\nSELECT jsonb_build_object('now',clock_timestamp(),'nonce',gen_random_uuid()::text,\n 'token',replace(gen_random_uuid()::text || gen_random_uuid()::text,'-',''),\n 'ticket',(SELECT to_jsonb(t) FROM target t),\n 'revision',(SELECT updated_at::text FROM target),\n 'init_failures',(SELECT count(*) FROM ticket_events WHERE ticket_id=(SELECT id FROM target) AND event='CBM_INIT_FAILURE'),\n 'state',(SELECT payload FROM ticket_events WHERE ticket_id=(SELECT id FROM target)\n          AND event='CBM_DISPATCH_STATE' ORDER BY id DESC LIMIT 1),\n 'inbox',COALESCE((SELECT jsonb_agg(to_jsonb(e) ORDER BY e.id) FROM ticket_events e\n          WHERE e.ticket_id=(SELECT id FROM target) AND e.event='CBM_RESPONSE'), '[]'::jsonb),\n 'candidates',COALESCE((SELECT jsonb_agg(to_jsonb(c) ORDER BY c.open_jobs,c.last_assigned_at ASC NULLS FIRST,c.rating DESC,c.technician_id)\n FROM (SELECT x.id AS technician_id,x.full_name,x.email,x.rating,x.last_assigned_at,\n (SELECT count(*) FROM tickets j WHERE j.technician_id=x.id AND j.status IN ('ASSIGNED','WORK_DONE','PENDING_APPROVAL','REWORK')) AS open_jobs\n FROM technicians x WHERE x.active=TRUE AND x.zone='building-A'\n AND (SELECT required_skill FROM target)=ANY(x.skills)) c),'[]'::jsonb)\n) AS context;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($('When Executed by Another Workflow').first().json)] }}",
+          "queryBatching": "single"
+        }
+      },
+      "id": "516902d38449919eafccc963af2d0950",
+      "name": "Load Ticket State",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        440,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_POSTGRES_CREDENTIAL_ID",
+          "name": "CBM Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const active = o => ['SENDING','LIVE','UNCERTAIN'].includes(o.status);\n\nconst terminal = t => !['LOCALIZED','DISPATCHING'].includes(t.status);\n\nfunction audit(c,type,detail={}) {c.state.audit.push({type,at:c.now.toISOString(),...detail});}\n\nfunction block(c,reason) {c.state.halted=true;c.state.error=reason;audit(c,'OPERATOR_ACTION_REQUIRED',{reason});}\n\nfunction context(request,row) {\n  const state=row.state?JSON.parse(JSON.stringify(row.state)):null;\n  const c={request,row,state,ticket:row.ticket,now:new Date(row.now),before:JSON.stringify(state),mail:null,config:state?.config||request.config,feedback:null};\n  if(state) {\n    state.audit ||= [];state.messages ||= {};state.offers ||= [];\n    if(terminal(row.ticket))state.status=row.ticket.status;\n    for(const m of Object.values(state.messages)) {\n      if(m.status==='SENDING'&&c.now-Date.parse(m.claimed_at)>300000&&!(request.operation==='ack'&&request.receipt?.key===m.key)) {\n        m.status='UNCERTAIN';const o=state.offers.find(o=>o.id===m.offer_id);if(o&&active(o))o.status='UNCERTAIN';\n        block(c,`Delivery receipt missing for ${m.key}. Reconcile with Gmail before resending.`);\n      }\n    }\n  }\n  return c;\n}\n\nfunction facts(c) {\n  const {state:s,ticket:t,row,now}=c;\n  if(!t)return {ticket_id:null,outcome:'NO_TICKET',initialized:false};\n  if(!s)return {ticket_id:t.id,outcome:Number(row.init_failures||0)>=3?'OPERATOR_ACTION_REQUIRED':'UNINITIALIZED',initialized:false};\n  const offers=s.offers,notices=Object.values(s.messages),candidates=row.candidates||[];\n  const available=s.shortlist.filter(id=>!offers.some(o=>o.technician_id===id)&&candidates.some(c=>Number(c.technician_id)===id));\n  const pending=(row.inbox||[]).filter(i=>Number(i.id)>Number(s.response_cursor));\n  const expired=offers.filter(o=>active(o)&&Date.parse(o.expires_at)<=now.getTime()),live=offers.filter(active);\n  const urgent=Number(t.severity)>=4,cap=urgent?2:1,opening=s.messages.opening?.status;\n  const beforeAppointment=!urgent||now.getTime()<Date.parse(s.urgent_start),dispatchOpen=!terminal(t);\n  // Outcome verification is separate from the agent's choice of tools.\n  const unfinished=pending.length>0||expired.length>0||notices.some(m=>m.status==='PENDING'&&!m.key.startsWith('offer:')&&(m.key!=='opening'||dispatchOpen))||\n    (dispatchOpen&&opening==='SENT'&&((live.length<cap&&available.length>0&&beforeAppointment)||(live.length===0&&(available.length===0||!beforeAppointment))));\n  const wakes=[...live.map(o=>Date.parse(o.expires_at)),...notices.filter(m=>m.status==='SENDING').map(m=>Date.parse(m.claimed_at)+300001)];\n  const nextWake=s.halted?null:unfinished?now.toISOString():wakes.length?new Date(Math.min(...wakes)).toISOString():null;\n  return {ticket_id:t.id,initialized:true,status:t.status,dispatch_status:s.status,\n    outcome:s.halted?'OPERATOR_ACTION_REQUIRED':unfinished?'ACTION_REQUIRED':s.status==='ASSIGNED'?'ASSIGNED':s.status==='ESCALATED'?'ESCALATED':'WAITING',\n    now:now.toISOString(),urgent,max_live_offers:cap,active_offer_count:live.length,urgent_start:s.urgent_start,original_date:s.original_date,\n    opening_status:opening,pending_response_count:pending.length,expired_offer_count:expired.length,next_wake:nextWake,\n    available_candidate_ids:available,error:s.halted?s.error:null,\n    offers:offers.map(({token,...o})=>o),notices:notices.map(m=>({key:m.key,status:m.status,message_id:m.message_id||null})),\n    candidates:s.shortlist.map(id=>{const v=candidates.find(x=>Number(x.technician_id)===id);return v?{technician_id:id,full_name:v.full_name,eligible:true,open_jobs:v.open_jobs,last_assigned_at:v.last_assigned_at,rating:v.rating}:{technician_id:id,eligible:false};})};\n}\n\nfunction finish(c) {\n  const result=facts(c);if(c.feedback)result.operation_result=c.feedback;\n  if(c.state){c.state.next_wake=c.request.operation==='failure'&&!c.state.halted?new Date(c.now.getTime()+60000).toISOString():result.next_wake;c.state.audit=c.state.audit.slice(-60);}\n  return {write:c.request.operation!=='read'&&!!c.state&&JSON.stringify(c.state)!==c.before,state:c.state,mail:c.mail,result,feedback:c.feedback};\n}\n\nfunction reject(c,reason) {c.feedback={performed:false,reason};return finish(c);}\n\nconst escapeHtml = v => String(v ?? '').replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c]));\n\nfunction queue(c,key,to,subject,html,offerId=null) {c.state.messages[key] ||= {key,to,subject,html,offer_id:offerId,status:'PENDING'};}\n\nfunction details(c) {\n  const t=c.ticket,e=escapeHtml;return `<p><b>Element:</b> ${e(t.ifc_name)} (${e(t.ifc_class)})<br><b>Issue:</b> ${e(t.description)}<br><b>Severity:</b> ${e(t.severity)}/5</p>`+\n    (/^https:\\/\\//i.test(t.photo_before_url||'')?`<p><a href=\"${e(t.photo_before_url)}\">Before photo</a></p>`:'');\n}\n\nfunction escalate(request,row) {\n  const c=context(request,row),s=c.state;if(!s)return finish(c);const f=facts(c);\n  if(s.halted||terminal(c.ticket)||f.pending_response_count||f.expired_offer_count||f.active_offer_count)return reject(c,'ESCALATION_PRECONDITIONS_NOT_MET');\n  if(f.available_candidate_ids.length&&(!f.urgent||c.now.getTime()<Date.parse(s.urgent_start)))return reject(c,'ELIGIBLE_CANDIDATES_REMAIN');\n  s.status='ESCALATED';s.reason=f.urgent&&c.now.getTime()>=Date.parse(s.urgent_start)?'URGENT_APPOINTMENT_REACHED':'CANDIDATES_EXHAUSTED';\n  queue(c,'escalated:fm',c.config.fmEmail,`[CBM] Ticket #${c.ticket.id} ESCALATED`,`<p>Manual dispatch is required. Reason: ${s.reason}.</p>${details(c)}`);audit(c,'DISPATCH_ESCALATED',{reason:s.reason});return finish(c);\n}\nconst runOperation = escalate;\nconst input=$('When Executed by Another Workflow').first().json;\nif(!input.ticketId&&!input.sourceKey)throw new Error('A bound ticket or source identifier is required');\nconst request={...input,operation:\"escalate\",config:{\"fmEmail\":\"fm@test.invalid\",\"callbackBase\":\"https://cbm.validation.invalid/webhook\",\"model\":\"claude-sonnet-4-6\",\"postgresCredentialId\":\"REPLACE_POSTGRES_CREDENTIAL_ID\",\"postgresCredentialName\":\"CBM Postgres\",\"gmailCredentialId\":\"REPLACE_GMAIL_CREDENTIAL_ID\",\"gmailCredentialName\":\"CBM Gmail\",\"anthropicCredentialId\":\"REPLACE_ANTHROPIC_CREDENTIAL_ID\",\"anthropicCredentialName\":\"CBM Anthropic\",\"workflowIds\":{\"initialize\":\"cbmIntake2026091509\",\"offer_next\":\"cbmIntake2026091510\",\"send_notices\":\"cbmIntake2026091512\",\"process_events\":\"cbmIntake2026091511\",\"escalate\":\"cbmIntake2026091507\",\"ack\":\"cbmIntake2026091506\",\"failure\":\"cbmIntake2026091508\"}}};\nconst row=$json.context;\nconst d=runOperation(request,row);\nreturn [{json:{...d,ticketId:row.ticket?.id,revision:row.revision,assigning:row.ticket?.status!=='ASSIGNED'&&d.state?.status==='ASSIGNED'}}];"
+      },
+      "id": "faadc84cab79f1587e7f87206a62e83f",
+      "name": "Prepare Escalation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "66ae1ba0682929a7b1238e775ba8d6c3",
+              "leftValue": "={{ $json.write === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a7fcc733d9478c45750385ef6f784af9",
+      "name": "State Changed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nWITH changed AS (\n UPDATE tickets SET status=$3::jsonb->>'status',\n technician_id=CASE WHEN $3::jsonb->>'status'='ASSIGNED' THEN ($3::jsonb->>'assignee')::int ELSE technician_id END,\n scheduled_date=CASE WHEN $3::jsonb->>'status'='ASSIGNED' THEN ($3::jsonb->>'scheduled_date')::date ELSE scheduled_date END,\n scheduled_slot=CASE WHEN $3::jsonb->>'status'='ASSIGNED' THEN $3::jsonb->>'scheduled_slot' ELSE scheduled_slot END,\n updated_at=GREATEST(clock_timestamp(),updated_at+interval '1 microsecond')\n WHERE id=$1::int AND updated_at=$2::timestamptz RETURNING id,technician_id\n), log AS (\n INSERT INTO ticket_events(ticket_id,event,payload) SELECT id,'CBM_DISPATCH_STATE',$3::jsonb FROM changed RETURNING id\n), stats AS (\n UPDATE technicians SET last_assigned_at=clock_timestamp()\n WHERE id IN (SELECT technician_id FROM changed) AND $4::boolean RETURNING id\n)\nSELECT EXISTS(SELECT 1 FROM changed) AS applied;",
+        "options": {
+          "queryReplacement": "={{ [$json.ticketId,$json.revision,JSON.stringify($json.state),$json.assigning] }}",
+          "queryBatching": "single"
+        }
+      },
+      "id": "824bbfb948084b10e90d2695edfbec02",
+      "name": "Commit Change",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1100,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_POSTGRES_CREDENTIAL_ID",
+          "name": "CBM Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "4e14883f09540d41bd7d88996706a8b1",
+              "leftValue": "={{ $json.applied === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f68af259a2905209bf58497df2e84008",
+      "name": "Commit Succeeded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "if($runIndex>=4)throw new Error('Concurrent update retry limit reached. No uncommitted email was sent.');\nreturn [{json:$('When Executed by Another Workflow').first().json}];"
+      },
+      "id": "fdba401430fcc1d7298639e9947bde5b",
+      "name": "Retry Conflict",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT context || jsonb_build_object('operation_result',$2::jsonb) AS context FROM (WITH loaded AS (WITH target AS (\n SELECT t.* FROM tickets t WHERE\n (NULLIF($1::jsonb->>'ticketId','') IS NOT NULL AND t.id=(NULLIF($1::jsonb->>'ticketId',''))::int)\n OR (NULLIF($1::jsonb->>'ticketId','') IS NULL AND EXISTS (\n SELECT 1 FROM ticket_events s WHERE s.ticket_id=t.id AND s.event='CBM_SOURCE' AND s.payload->>'source_key'=$1::jsonb->>'sourceKey'))\n ORDER BY t.id LIMIT 1\n)\nSELECT jsonb_build_object('now',clock_timestamp(),'nonce',gen_random_uuid()::text,\n 'token',replace(gen_random_uuid()::text || gen_random_uuid()::text,'-',''),\n 'ticket',(SELECT to_jsonb(t) FROM target t),\n 'revision',(SELECT updated_at::text FROM target),\n 'init_failures',(SELECT count(*) FROM ticket_events WHERE ticket_id=(SELECT id FROM target) AND event='CBM_INIT_FAILURE'),\n 'state',(SELECT payload FROM ticket_events WHERE ticket_id=(SELECT id FROM target)\n          AND event='CBM_DISPATCH_STATE' ORDER BY id DESC LIMIT 1),\n 'inbox',COALESCE((SELECT jsonb_agg(to_jsonb(e) ORDER BY e.id) FROM ticket_events e\n          WHERE e.ticket_id=(SELECT id FROM target) AND e.event='CBM_RESPONSE'), '[]'::jsonb),\n 'candidates',COALESCE((SELECT jsonb_agg(to_jsonb(c) ORDER BY c.open_jobs,c.last_assigned_at ASC NULLS FIRST,c.rating DESC,c.technician_id)\n FROM (SELECT x.id AS technician_id,x.full_name,x.email,x.rating,x.last_assigned_at,\n (SELECT count(*) FROM tickets j WHERE j.technician_id=x.id AND j.status IN ('ASSIGNED','WORK_DONE','PENDING_APPROVAL','REWORK')) AS open_jobs\n FROM technicians x WHERE x.active=TRUE AND x.zone='building-A'\n AND (SELECT required_skill FROM target)=ANY(x.skills)) c),'[]'::jsonb)\n) AS context), base AS (\n SELECT context AS raw, context->'ticket' AS t, NULLIF(context->'state','null'::jsonb) AS s,\n (context->>'now')::timestamptz AS instant FROM loaded\n), summary AS (\n SELECT *,\n COALESCE((t->>'severity')::int>=4,FALSE) AS urgent,\n (SELECT count(*) FROM jsonb_array_elements(COALESCE(s->'offers','[]')) o WHERE o->>'status' IN ('SENDING','LIVE','UNCERTAIN')) AS active_count,\n (SELECT count(*) FROM jsonb_array_elements(COALESCE(s->'offers','[]')) o WHERE o->>'status' IN ('SENDING','LIVE','UNCERTAIN') AND (o->>'expires_at')::timestamptz<=instant) AS expired_count,\n (SELECT count(*) FROM jsonb_array_elements(raw->'inbox') e WHERE (e->>'id')::bigint>COALESCE((s->>'response_cursor')::bigint,0)) AS response_count,\n COALESCE((s->>'halted')::boolean,FALSE) OR EXISTS (\n SELECT 1 FROM jsonb_each(COALESCE(s->'messages','{}')) m WHERE m.value->>'status'='UNCERTAIN'\n OR (m.value->>'status'='SENDING' AND (m.value->>'claimed_at')::timestamptz+interval '5 minutes'<instant)) AS needs_operator,\n COALESCE((SELECT jsonb_agg(id ORDER BY ord) FROM jsonb_array_elements(COALESCE(s->'shortlist','[]')) WITH ORDINALITY AS ids(id,ord)\n WHERE NOT EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(s->'offers','[]')) o WHERE o->'technician_id'=id)\n AND EXISTS(SELECT 1 FROM jsonb_array_elements(raw->'candidates') c WHERE c->'technician_id'=id)),'[]') AS available,\n EXISTS(SELECT 1 FROM jsonb_each(COALESCE(s->'messages','{}')) m WHERE m.value->>'status'='PENDING'\n AND m.key NOT LIKE 'offer:%' AND (m.key<>'opening' OR t->>'status' IN ('LOCALIZED','DISPATCHING'))) AS pending_notices\n FROM base\n), checked AS (\n SELECT *, response_count>0 OR expired_count>0 OR pending_notices OR (\n t->>'status' IN ('LOCALIZED','DISPATCHING') AND s#>>'{messages,opening,status}'='SENT' AND (\n (active_count<CASE WHEN urgent THEN 2 ELSE 1 END AND jsonb_array_length(available)>0 AND (NOT urgent OR instant<(s->>'urgent_start')::timestamptz))\n OR (active_count=0 AND (jsonb_array_length(available)=0 OR (urgent AND instant>=(s->>'urgent_start')::timestamptz))))) AS unfinished\n FROM summary\n)\nSELECT jsonb_build_object(\n 'ticket_id',t->'id','initialized',s IS NOT NULL,'status',t->>'status',\n 'outcome',CASE WHEN t IS NULL OR t='null'::jsonb THEN 'NO_TICKET'\n WHEN needs_operator OR (s IS NULL AND (raw->>'init_failures')::int>=3) THEN 'OPERATOR_ACTION_REQUIRED'\n WHEN s IS NULL THEN 'UNINITIALIZED' WHEN unfinished THEN 'ACTION_REQUIRED'\n WHEN t->>'status'='ASSIGNED' THEN 'ASSIGNED' WHEN t->>'status'='ESCALATED' THEN 'ESCALATED' ELSE 'WAITING' END,\n 'now',instant,'urgent',urgent,'max_live_offers',CASE WHEN urgent THEN 2 ELSE 1 END,\n 'active_offer_count',active_count,'expired_offer_count',expired_count,'pending_response_count',response_count,\n 'urgent_start',s->'urgent_start','original_date',s->'original_date','opening_status',s#>>'{messages,opening,status}',\n 'available_candidate_ids',available,'next_wake',s->'next_wake',\n 'error',CASE WHEN needs_operator THEN COALESCE(s->>'error','Delivery receipt missing or uncertain. Operator reconciliation required.') ELSE NULL END,\n 'offers',COALESCE((SELECT jsonb_agg(o-'token') FROM jsonb_array_elements(COALESCE(s->'offers','[]')) o),'[]'),\n 'notices',COALESCE((SELECT jsonb_agg(jsonb_build_object('key',m.key,'status',m.value->>'status','message_id',m.value->'message_id')) FROM jsonb_each(COALESCE(s->'messages','{}')) m),'[]'),\n 'candidates',COALESCE((SELECT jsonb_agg(jsonb_build_object('technician_id',id,'eligible',c IS NOT NULL,\n 'full_name',c->'full_name','open_jobs',c->'open_jobs','last_assigned_at',c->'last_assigned_at','rating',c->'rating') ORDER BY ord)\n FROM jsonb_array_elements(COALESCE(s->'shortlist','[]')) WITH ORDINALITY ids(id,ord)\n LEFT JOIN LATERAL (SELECT value AS c FROM jsonb_array_elements(raw->'candidates') WHERE value->'technician_id'=id) found ON TRUE),'[]')\n) AS context FROM checked) result;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($('When Executed by Another Workflow').first().json),JSON.stringify($('Prepare Escalation').item.json.feedback || null)] }}",
+          "queryBatching": "single"
+        }
+      },
+      "id": "0aee57ea2670f3528d33aeb9df2050f6",
+      "name": "Return Current Context",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2200,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_POSTGRES_CREDENTIAL_ID",
+          "name": "CBM Postgres"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Load Ticket State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Ticket State": {
+      "main": [
+        [
+          {
+            "node": "Prepare Escalation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Escalation": {
+      "main": [
+        [
+          {
+            "node": "State Changed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "State Changed?": {
+      "main": [
+        [
+          {
+            "node": "Commit Change",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Current Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commit Change": {
+      "main": [
+        [
+          {
+            "node": "Commit Succeeded?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commit Succeeded?": {
+      "main": [
+        [
+          {
+            "node": "Return Current Context",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Retry Conflict",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retry Conflict": {
+      "main": [
+        [
+          {
+            "node": "Load Ticket State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "timezone": "Europe/Rome"
+  },
+  "id": "cbmIntake2026091507",
+  "active": false
+}

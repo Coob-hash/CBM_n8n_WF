@@ -1,0 +1,60 @@
+# Local secrets and deployment-specific configuration
+.env
+.env.*
+!.env.example
+!.env.template
+deployment.local.json
+database/site.local.json
+knowledge/catalog.local.json
+knowledge/documents/
+**/credentials.json
+**/credentials.local.json
+**/token.json
+**/tokens.json
+*.pem
+*.key
+
+# Python environments, caches, and build artifacts
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+build/
+dist/
+
+# JavaScript dependencies and downloaded test runtime
+node_modules/
+.test-runtime/
+
+# Generated BIM files, runtime data, and logs
+/models/
+/uploads/
+/output/
+/logs/
+*.log
+*.sqlite
+*.sqlite3
+
+# Local editors, operating-system files, and incidental backups
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+*.tmp
+*.bak
+*.bak-*
+
+technical_sheets/*
+!technical_sheets/README.md
+
+# Deliberately tracked: workflow exports, the required Phase A baseline,
+# configuration examples and validation report.
+~$*

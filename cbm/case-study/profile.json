@@ -1,0 +1,151 @@
+{
+  "case_id": "maddaloni-office-20260915",
+  "title": "Maddaloni office — Base ufficio",
+  "map_code": "MAP_J964JX6MGEGO",
+  "is_right_handed": true,
+  "ifc_source": "source/Base ufficio.ifc",
+  "ifc_source_sha256": "3998286248fe687a4353b4cc3efde8275a2bff617319738942cb8738ac36cdc7",
+  "ifc_initial_name": "office_v1.ifc",
+  "ifc_schema": "IFC2X3",
+  "length_unit": "metre",
+  "original_photo_directory": "C:\\Users\\USER\\Desktop\\Progetti Dottorato\\ISTEA_2026\\Case_Study\\FOTO CASO STUDIO",
+  "map_source_e57": "C:\\Users\\USER\\Desktop\\Progetti Dottorato\\ISTEA_2026\\Case_Study\\case_study_e57\\e57\\maddaloni 1.e57",
+  "map_source_e57_guid": "{D708C65A-0BE7-45E8-9E85-CBE992F63F35}",
+  "asset_selection": "automatic_vps_and_vision",
+  "assets": [
+    {
+      "global_id": "1qMgWWNHzE3egAZbWFbgXF",
+      "class": "IfcBuildingElementProxy",
+      "name": "L22_EF_Box 503:L22_EF_Box 503_WM_Bipasso x2:219552",
+      "position_m": [
+        -0.7549160871904613,
+        0.031313249820488755,
+        -0.8835460102699473
+      ]
+    },
+    {
+      "global_id": "3kcZF9AH16IwPfuL_CGFlR",
+      "class": "IfcBuildingElementProxy",
+      "name": "HVAC_Heaters_Fondital_Calidor Super B4 BC 800 V03:_USE TYPE CATALOGUE_:226888",
+      "position_m": [
+        -0.7628218485201493,
+        -0.6423757180973507,
+        -1.097466715480021
+      ]
+    },
+    {
+      "global_id": "0L_Xccv8v21hwB5yYwxexS",
+      "class": "IfcDoor",
+      "name": "Porta - 1 Anta:80x210 cm:144154",
+      "position_m": [
+        -8.983118615761171,
+        -3.7038393043821354,
+        -1.300000000000001
+      ]
+    },
+    {
+      "global_id": "0L_Xccv8v21hwB5yYwxeu9",
+      "class": "IfcDoor",
+      "name": "Porta - 1 Anta:80x210 cm:144335",
+      "position_m": [
+        -7.6151715454314655,
+        0.7719088285720258,
+        -1.300000000000001
+      ]
+    },
+    {
+      "global_id": "0iXsb6cUbFTwXlliOwbswE",
+      "class": "IfcDoor",
+      "name": "Porta - 1 Anta:80x210 cm:146390",
+      "position_m": [
+        -7.896445764536621,
+        -5.6124525549963415,
+        -1.300000000000001
+      ]
+    },
+    {
+      "global_id": "0iXsb6cUbFTwXlliOwbsbD",
+      "class": "IfcDoor",
+      "name": "Porta - 1 Anta:80x210 cm:146453",
+      "position_m": [
+        -3.7432365245152583,
+        -1.8400323635243685,
+        -1.300000000000001
+      ]
+    },
+    {
+      "global_id": "0iXsb6cUbFTwXlliOwbsaH",
+      "class": "IfcDoor",
+      "name": "Porta - 1 Anta:80x210 cm:146505",
+      "position_m": [
+        -3.72229363679052,
+        -3.039849597712038,
+        -1.300000000000001
+      ]
+    },
+    {
+      "global_id": "0iXsb6cUbFTwXlliOwbsli",
+      "class": "IfcDoor",
+      "name": "Porta - 1 Anta:70x210 cm:147124",
+      "position_m": [
+        -7.37327563068136,
+        -6.78906940192945,
+        -1.300000000000001
+      ]
+    },
+    {
+      "global_id": "0iXsb6cUbFTwXlliOwbsk5",
+      "class": "IfcDoor",
+      "name": "Porta - 1 Anta:70x210 cm:147165",
+      "position_m": [
+        -7.333299997600598,
+        -8.04767342206135,
+        -1.300000000000001
+      ]
+    },
+    {
+      "global_id": "3kcZF9AH16IwPfuL_CG2Hm",
+      "class": "IfcWindow",
+      "name": "Aluprof_MB-59S-Casement_E_Alu_Window-2sash-TopHung_ENG_R-00506:2460 x 1480:240099",
+      "position_m": [
+        -13.268388851246526,
+        -2.3190672875300473,
+        1.2999999999999992
+      ]
+    },
+    {
+      "global_id": "3kcZF9AH16IwPfuL_CG3t5",
+      "class": "IfcWindow",
+      "name": "Aluprof_MB-59S-Casement_E_Alu_Window-2sash-TopHung_ENG_R-00506:2460 x 1480:241750",
+      "position_m": [
+        -11.216366837081932,
+        -0.9623043556278312,
+        1.3000000000000076
+      ]
+    },
+    {
+      "global_id": "3kcZF9AH16IwPfuL_CG3ts",
+      "class": "IfcWindow",
+      "name": "Aluprof_MB-59S-Casement_E_Alu_Window-2sash-TopHung_ENG_R-00506:2460 x 1480:241765",
+      "position_m": [
+        -9.164344822917336,
+        0.39445857627438574,
+        1.3000000000000154
+      ]
+    },
+    {
+      "global_id": "3kcZF9AH16IwPfuL_CG3rA",
+      "class": "IfcWindow",
+      "name": "Aluprof_MB-59S-Casement_E_Alu_Window-2sash-TopHung_ENG_R-00506:2460 x 1480:241881",
+      "position_m": [
+        -7.283296999358839,
+        2.0098096481737593,
+        1.3000000000000234
+      ]
+    }
+  ],
+  "primary_targets": {
+    "radiator": "3kcZF9AH16IwPfuL_CGFlR",
+    "electrical_outlet": "1qMgWWNHzE3egAZbWFbgXF"
+  }
+}

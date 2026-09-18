@@ -1,0 +1,517 @@
+{
+  "id": "ZvjWnuW4lN0EFTdI",
+  "name": "CBM - Synchronize IFC Technical Knowledge",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "7f01df83-08c0-4cac-a544-579e32316817",
+      "name": "Every Minute",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1760,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://knowledge-service:8001/knowledge/snapshot",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "e00da06f-a7c0-4577-8cf5-f86699dd445d",
+      "name": "Read Approved IFC Sources",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1536,
+        80
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "cbmKnowledgeHeader20260917",
+          "name": "CBM Knowledge Service Header"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT public.cbm_begin_knowledge($1::jsonb) AS build;",
+        "options": {
+          "queryBatching": "single",
+          "queryReplacement": "={{ [JSON.stringify($json)] }}"
+        }
+      },
+      "id": "f4a427fa-fe1f-4329-9142-6fdea675f8c2",
+      "name": "Begin Knowledge Generation",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -1328,
+        80
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cbmSupabasePgIsteaGroup1",
+          "name": "CBM Supabase Postgres - ISTEA_Group1"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "bdcb8046e1ea84f4b571724bb57c7ba9",
+              "leftValue": "={{ $json.build.action === \"BUILD\" }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "15554354-4f93-4e4f-93bb-b544e20fc08b",
+      "name": "Build Required?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -1104,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "fe8f5309e5bafd265aba09fd3e21f545",
+              "leftValue": "={{ $json.build.documents.length > 0 }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "2e52d886-7492-4d59-8614-01bbcf968c5e",
+      "name": "Embedding Needed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -880,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $json.build.documents.map(json=>({json}));"
+      },
+      "id": "ec5a96d5-c2cf-48d7-80d6-4d4103e05473",
+      "name": "Documents To Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -656,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "57bccbec-eec5-41ad-8a01-5d77d300d918",
+      "name": "One Document At A Time",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -448,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "tableName": {
+          "__rl": true,
+          "value": "cbm_knowledge_documents",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "4106fd22-2184-453f-9343-67caf3619cb7",
+      "name": "Supabase - Insert Document",
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreSupabase",
+      "typeVersion": 1.3,
+      "position": [
+        -224,
+        272
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "vwpdbfFtXMR4D7Nh",
+          "name": "Supabase account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {},
+        "model": "text-embedding-3-small"
+      },
+      "id": "c32bca2c-d098-4f1f-ab5b-561b3fcabc0f",
+      "name": "OpenAI Embeddings - Ingestion",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        -320,
+        528
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "f0y7IjBcxpOEn1zU",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsonMode": "expressionData",
+        "jsonData": "={{ $json.content }}",
+        "textSplittingMode": "custom",
+        "options": {
+          "metadata": {
+            "metadataValues": [
+              {
+                "name": "generation",
+                "value": "={{ $json.metadata.generation }}"
+              },
+              {
+                "name": "chunk_id",
+                "value": "={{ $json.metadata.chunk_id }}"
+              },
+              {
+                "name": "ifc_global_id",
+                "value": "={{ $json.metadata.ifc_global_id }}"
+              },
+              {
+                "name": "product_id",
+                "value": "={{ $json.metadata.product_id }}"
+              },
+              {
+                "name": "source_id",
+                "value": "={{ $json.metadata.source_id }}"
+              },
+              {
+                "name": "source_title",
+                "value": "={{ $json.metadata.source_title }}"
+              },
+              {
+                "name": "source_revision",
+                "value": "={{ $json.metadata.source_revision }}"
+              },
+              {
+                "name": "page",
+                "value": "={{ $json.metadata.page }}"
+              },
+              {
+                "name": "source_sha256",
+                "value": "={{ $json.metadata.source_sha256 }}"
+              },
+              {
+                "name": "source_url",
+                "value": "={{ $json.metadata.source_url }}"
+              },
+              {
+                "name": "content_sha256",
+                "value": "={{ $json.metadata.content_sha256 }}"
+              },
+              {
+                "name": "embedding_model",
+                "value": "={{ $json.metadata.embedding_model }}"
+              },
+              {
+                "name": "model_sha256",
+                "value": "={{ $json.metadata.model_sha256 }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "829b7fec-2c35-44fd-bb88-316aca8e0686",
+      "name": "Approved Document Loader",
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1.1,
+      "position": [
+        -64,
+        528
+      ]
+    },
+    {
+      "parameters": {
+        "chunkSize": 2000,
+        "options": {}
+      },
+      "id": "3cd6ded5-e618-41df-936a-654a04af3f87",
+      "name": "Preserve Source Chunk",
+      "type": "@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter",
+      "typeVersion": 1,
+      "position": [
+        80,
+        752
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://knowledge-service:8001/knowledge/snapshot",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "b8e7627c-b503-4101-ab3a-73220bef6d87",
+      "name": "Recheck Source Snapshot",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "cbmKnowledgeHeader20260917",
+          "name": "CBM Knowledge Service Header"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT public.cbm_publish_knowledge($1::uuid,$2::text) AS publication;",
+        "options": {
+          "queryBatching": "single",
+          "queryReplacement": "={{ [$(\"Begin Knowledge Generation\").first().json.build.generation,$json.fingerprint] }}"
+        }
+      },
+      "id": "9735e1fc-132c-4420-9b1b-1585cd56ccaa",
+      "name": "Publish Complete Generation",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        224,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cbmSupabasePgIsteaGroup1",
+          "name": "CBM Supabase Postgres - ISTEA_Group1"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every Minute": {
+      "main": [
+        [
+          {
+            "node": "Read Approved IFC Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Approved IFC Sources": {
+      "main": [
+        [
+          {
+            "node": "Begin Knowledge Generation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Begin Knowledge Generation": {
+      "main": [
+        [
+          {
+            "node": "Build Required?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Required?": {
+      "main": [
+        [
+          {
+            "node": "Embedding Needed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embedding Needed?": {
+      "main": [
+        [
+          {
+            "node": "Documents To Items",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Recheck Source Snapshot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Documents To Items": {
+      "main": [
+        [
+          {
+            "node": "One Document At A Time",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "One Document At A Time": {
+      "main": [
+        [
+          {
+            "node": "Recheck Source Snapshot",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Supabase - Insert Document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase - Insert Document": {
+      "main": [
+        [
+          {
+            "node": "One Document At A Time",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Embeddings - Ingestion": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Supabase - Insert Document",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approved Document Loader": {
+      "ai_document": [
+        [
+          {
+            "node": "Supabase - Insert Document",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preserve Source Chunk": {
+      "ai_textSplitter": [
+        [
+          {
+            "node": "Approved Document Loader",
+            "type": "ai_textSplitter",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recheck Source Snapshot": {
+      "main": [
+        [
+          {
+            "node": "Publish Complete Generation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "errorWorkflow": "NfWWu5n2L5vYXXav"
+  },
+  "pinData": {},
+  "staticData": null,
+  "meta": null,
+  "nodeGroups": [],
+  "active": 0
+}

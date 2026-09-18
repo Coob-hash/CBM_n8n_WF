@@ -1,0 +1,15 @@
+'use strict';
+const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
+const original=JSON.parse(fs.readFileSync(path.join(__dirname,'../app/wf1_ticket_intake_and_dispatch.json'),'utf8'));
+const copy=x=>JSON.parse(JSON.stringify(x));
+const names=['Dispatch Batch Loop','Process One Dispatch Ticket','One Capture Input','Dispatch Work Item?'];
+const nodes=original.nodes.filter(n=>names.includes(n.name)).map(copy);
+const add=(name,type,parameters)=>nodes.push({id:crypto.randomUUID(),name,type,typeVersion:type==='n8n-nodes-base.code'?2:1,position:[0,0],parameters});
+add('Manual Test','n8n-nodes-base.manualTrigger',{});
+add('Seed Five Claims','n8n-nodes-base.code',{jsCode:'return [1,2,3,4,5].map(ticketId=>({json:{dispatch_run:true,ticketId}}));'});
+add('Mock Dispatch','n8n-nodes-base.code',{jsCode:'if($json.ticketId===3)throw new Error("Expected isolated child failure"); return [{json:{ticketId:$json.ticketId,processed:true}}];'});
+add('Assert Batch Result','n8n-nodes-base.code',{jsCode:'const rows=$input.all().map(i=>i.json); const done=rows.filter(r=>r.processed).map(r=>r.ticketId); if(JSON.stringify(done)!=="[1,2,4,5]"||rows.length!==5)throw new Error(JSON.stringify(rows)); return [{json:{passed:true,childExecutions:5,completed:done,expectedFailures:1}}];'});
+const edge=node=>[{node,type:'main',index:0}];
+const w={id:'cbmDispatchQueueIsolatedCheck',name:'Isolated CBM dispatch self-call and batch check',active:false,nodes,connections:{'Manual Test':{main:[edge('Seed Five Claims')]},'Seed Five Claims':{main:[edge('Dispatch Batch Loop')]},'Dispatch Batch Loop':{main:[edge('Assert Batch Result'),edge('Process One Dispatch Ticket')]},'Process One Dispatch Ticket':{main:[edge('Dispatch Batch Loop')]},'One Capture Input':{main:[edge('Dispatch Work Item?')]},'Dispatch Work Item?':{main:[edge('Mock Dispatch'),[]]}},settings:{executionOrder:'v1',executionTimeout:90,callerPolicy:'workflowsFromSameOwner'}};
+w.nodes.sort((a,b)=>(a.name==='Manual Test'?-1:b.name==='Manual Test'?1:0));
+fs.writeFileSync(path.join(__dirname,'../../validation/n8n-batch-check.json'),JSON.stringify([w],null,2)+'\n');

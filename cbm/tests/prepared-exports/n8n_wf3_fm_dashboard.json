@@ -1,0 +1,870 @@
+{
+  "name": "[CBM Intake Approval 2026.09.15] CBM - 3. Facility Manager Dashboard",
+  "nodes": [
+    {
+      "parameters": {
+        "public": true,
+        "mode": "hostedChat",
+        "authentication": "basicAuth",
+        "initialMessages": "Facility manager dashboard.\nAsk about any ticket, at any point in its history.",
+        "options": {
+          "responseMode": "lastNode",
+          "title": "CBM - Facility Manager",
+          "subtitle": "Maintenance tickets, full history",
+          "allowFileUploads": false
+        }
+      },
+      "name": "FM Chat",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -720,
+        -260
+      ],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "REPLACE_CHAT_AUTH_CREDENTIAL_ID",
+          "name": "CBM FM Dashboard Login"
+        }
+      },
+      "webhookId": "3f1c9d40-6b2e-4a55-9f77-2c0d8e5b14aa"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalise the chat turn, and fix the date anchors once.\n//\n// The agent must not work out what \"this week\" or \"a month\" means for itself:\n// the chat and the weekly report have to agree, and a model that computes dates\n// from a system prompt will not agree with SQL that computes them from now().\n// Everything time-relative is decided here and handed over as an ISO string.\nconst t = $input.first().json;\n\nconst raw = String(t.chatInput != null ? t.chatInput : (t.question || ''))\n  .replace(/\\s+/g, ' ')\n  .trim();\nconst question = raw.slice(0, 1500);\nconst sessionId = String(t.sessionId || t.sessionid || 'fm-default').slice(0, 120);\n\nconst now = new Date();\nconst iso = (d) => d.toISOString();\nconst back = (days) => iso(new Date(now.getTime() - days * 86400000));\n\nreturn [{\n  json: {\n    sessionId,\n    question,\n    asked: question.length > 0,\n    truncated: raw.length > 1500,\n    now: iso(now),\n    today: new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Rome',year:'numeric',month:'2-digit',day:'2-digit'}).format(now),\n    timezone: 'Europe/Rome',\n    week_start: back(7),\n    month_start: back(30),\n    stale_days: 30,\n  },\n}];"
+      },
+      "name": "FM Chat Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -500,
+        -260
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "wf3-question-asked",
+              "leftValue": "={{ $json.asked }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Question Asked?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -280,
+        -260
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ \"Facility manager question: \" + $json.question + \"\\n\\nToday is \" + $json.today + \". Use these anchors for any date filter: now=\" + $json.now + \", one week ago=\" + $json.week_start + \", one month ago=\" + $json.month_start + \".\" }}",
+        "options": {
+          "systemMessage": "You are the CBM facility manager's dashboard. You answer questions about maintenance tickets for the facility manager, who is the only person who reaches you.\n\nWHAT YOU CAN SEE\nYou read the maintenance database through the tools attached to you. They cover the whole history of tickets, not a recent window. You have no other source of truth: if a tool did not return it, you do not know it.\n\nWHAT YOU MUST NOT DO\n- Never state a ticket number, status, date, name or count that did not come from a tool result in this conversation. If you are unsure, run the lookup again rather than recalling it.\n- Never say you have changed, closed, assigned, scheduled or escalated anything. You cannot: every tool you hold is read-only. If asked to act on a ticket, say plainly that this dashboard only reads, and that closures go through the approval workflow.\n- Never guess at a ticket the manager referred to loosely. Search for it and show what you found.\n\nHOW TO ANSWER\n- Answer the question asked, then stop. A count is a sentence, not a table.\n- Quote ticket numbers as #id so they can be looked up.\n- When you list tickets, give id, status, age in days, element and technician, and order by whatever the question implies - usually oldest first for problems.\n- When a result set is empty, say so explicitly. Do not fill the silence.\n- If a search was capped by its row limit, say that the list is partial and how it was ordered.\n- Use markdown tables only for five rows or more.\n\nDATES\nEvery message carries today's date and ISO timestamps for one week and one month ago. Use those anchors. When you need a date filter, pass a full ISO timestamp; never pass words like \"last week\" to a tool. 'A month' means 30 days throughout this system, matching the weekly report.\n\nTOOLS\n- ticket_lookup: everything about one ticket, by number. Use it whenever a specific ticket is named.\n- ticket_search: filter the full history by status, technician, element, free text or date range. Leave an argument out to not filter on it. Prefer one search with several filters over several searches.\n- ticket_counts: how many tickets sit in each status, across the whole history.\n- ticket_history: the audit trail of one ticket, newest first - who did what and when the status moved.\n- overdue_tickets: tickets still open after a given number of days, default 30. This is the same definition the weekly report uses.\n- technician_workload: open and closed counts, average days to close, and current load per technician.\n- throughput_stats: tickets opened and closed per week or per month, for trend questions.\n- inspect_schema: read-only column listing. Call it only when a tool fails with an error naming a missing column or an unknown relation, then retry the failed call with corrected arguments. Try any one failing operation at most 3 times, then explain what failed.\n\nSTATUS VOCABULARY\nRECEIVED, NEEDS_TRIAGE, PENDING_AUTHORIZATION, REJECTED, LOCALIZED, DUPLICATE, DISPATCHING, ASSIGNED, ESCALATED, WORK_DONE, PENDING_APPROVAL, REWORK, CLOSED. A ticket is open unless it is CLOSED, DUPLICATE or REJECTED. Statuses are uppercase; pass them that way.",
+          "maxIterations": 12,
+          "returnIntermediateSteps": false
+        }
+      },
+      "name": "FM Dashboard Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2,
+      "position": [
+        -40,
+        -340
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// An empty turn should not cost a model call.\nreturn [{\n  json: {\n    output: [\n      'Ask me anything about the maintenance tickets. For example:',\n      '',\n      '- what is the status of ticket 42?',\n      '- which tickets are still open after a month?',\n      '- how many tickets did we close last week?',\n      '- what is Mario Rossi working on?',\n      '- show me everything ever raised on the second-floor radiators',\n    ].join('\\n'),\n  },\n}];"
+      },
+      "name": "Empty Question Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -40,
+        -140
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "id",
+          "value": "claude-sonnet-4-6"
+        },
+        "options": {
+          "temperature": 0,
+          "maxTokensToSample": 3000
+        }
+      },
+      "name": "FM Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [
+        -240,
+        -80
+      ],
+      "credentials": {
+        "anthropicApi": {
+          "id": "REPLACE_ANTHROPIC_CREDENTIAL_ID",
+          "name": "CBM Anthropic"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $('FM Chat Context').first().json.sessionId }}",
+        "contextWindowLength": 20
+      },
+      "name": "FM Chat Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        -60,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH v AS (SELECT $1::jsonb AS p)\nSELECT t.id, t.status, t.category, t.severity, t.description, t.required_skill,\n       t.reporter_email, t.ifc_global_id, t.ifc_class, t.ifc_name, t.ifc_storey,\n       t.ifc_new_version, t.map_code, t.vps_confidence,\n       t.scheduled_date, t.scheduled_slot, t.fm_reject_reason,\n       left(t.report_text, 2000) AS report_text, t.verification,\n       t.created_at, t.updated_at, t.closed_at,\n       date_part('day', now() - t.created_at)::int AS age_days,\n       te.full_name AS technician_name, te.email AS technician_email,\n       te.zone AS technician_zone\n  FROM v, tickets t\n  LEFT JOIN technicians te ON te.id = t.technician_id\n WHERE t.id = (v.p->>'ticketId')::int;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify({ ticketId: $fromAI(\"ticket_id\", \"The numeric id of the ticket to look up\", \"number\") })] }}"
+        },
+        "descriptionType": "manual",
+        "toolDescription": "Everything recorded about ONE ticket, including its report text, IFC element, technician, timestamps and age in days. Use whenever a specific ticket number is mentioned. Returns no rows if that ticket does not exist."
+      },
+      "name": "ticket_lookup",
+      "type": "n8n-nodes-base.postgresTool",
+      "typeVersion": 2.6,
+      "position": [
+        140,
+        -80
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_POSTGRES_CREDENTIAL_ID",
+          "name": "CBM Postgres"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH v AS (SELECT $1::jsonb AS p),\n     f AS (SELECT upper(NULLIF(v.p->>'status', ''))          AS status,\n                  NULLIF(v.p->>'technician', '')             AS technician,\n                  NULLIF(v.p->>'element', '')                AS element,\n                  NULLIF(v.p->>'text', '')                   AS q,\n                  NULLIF(v.p->>'openedAfter', '')::timestamptz  AS opened_after,\n                  NULLIF(v.p->>'openedBefore', '')::timestamptz AS opened_before,\n                  COALESCE(NULLIF(v.p->>'openOnly', '')::boolean, false) AS open_only,\n                  LEAST(COALESCE(NULLIF(v.p->>'limit', '')::int, 25), 100) AS max_rows\n             FROM v)\nSELECT t.id, t.status, t.category, t.severity,\n       left(t.description, 300) AS description,\n       t.ifc_name, t.ifc_storey, te.full_name AS technician_name,\n       t.created_at, t.updated_at, t.closed_at,\n       date_part('day', now() - t.created_at)::int AS age_days\n  FROM f, tickets t\n  LEFT JOIN technicians te ON te.id = t.technician_id\n WHERE (f.status IS NULL OR t.status = f.status)\n   AND (f.technician IS NULL\n        OR te.full_name ILIKE '%' || f.technician || '%'\n        OR te.email     ILIKE '%' || f.technician || '%')\n   AND (f.element IS NULL\n        OR t.ifc_name      ILIKE '%' || f.element || '%'\n        OR t.ifc_storey    ILIKE '%' || f.element || '%'\n        OR t.ifc_global_id = f.element)\n   AND (f.q IS NULL\n        OR t.description ILIKE '%' || f.q || '%'\n        OR t.category    ILIKE '%' || f.q || '%')\n   AND (f.opened_after  IS NULL OR t.created_at >= f.opened_after)\n   AND (f.opened_before IS NULL OR t.created_at <  f.opened_before)\n   AND (NOT f.open_only OR t.status NOT IN ('CLOSED', 'DUPLICATE', 'REJECTED'))\n ORDER BY t.created_at DESC\n LIMIT (SELECT max_rows FROM f);",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify({ status: $fromAI(\"status\", \"Exact ticket status, uppercase, e.g. ASSIGNED or CLOSED. Omit to search all statuses\", \"string\"), technician: $fromAI(\"technician\", \"Part of the technician name or email. Omit for any technician\", \"string\"), element: $fromAI(\"element\", \"Part of the IFC element name or storey, or an exact IFC GlobalId. Omit for any element\", \"string\"), text: $fromAI(\"text\", \"Words to look for in the fault description or category. Omit for any subject\", \"string\"), openedAfter: $fromAI(\"opened_after\", \"Only tickets raised at or after this ISO timestamp. Omit for no lower bound\", \"string\"), openedBefore: $fromAI(\"opened_before\", \"Only tickets raised before this ISO timestamp. Omit for no upper bound\", \"string\"), openOnly: $fromAI(\"open_only\", \"true to exclude CLOSED, DUPLICATE and REJECTED tickets\", \"boolean\"), limit: $fromAI(\"limit\", \"Maximum rows, default 25, capped at 100\", \"number\") })] }}"
+        },
+        "descriptionType": "manual",
+        "toolDescription": "Search the FULL ticket history. Every argument is optional and omitting one means do not filter on it: status (exact, uppercase), technician (name or email fragment), element (IFC name, storey, or exact GlobalId), text (matched against description and category), opened_after / opened_before (ISO timestamps), open_only (true excludes CLOSED, DUPLICATE and REJECTED), limit (default 25, max 100). Newest first. Prefer one call with several filters over several calls."
+      },
+      "name": "ticket_search",
+      "type": "n8n-nodes-base.postgresTool",
+      "typeVersion": 2.6,
+      "position": [
+        360,
+        -80
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_POSTGRES_CREDENTIAL_ID",
+          "name": "CBM Postgres"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH v AS (SELECT $1::jsonb AS p)\nSELECT t.status,\n       count(*)::int AS tickets,\n       count(*) FILTER (WHERE t.created_at >= now() - interval '7 days')::int\n         AS opened_last_7_days,\n       count(*) FILTER (WHERE t.created_at < now() - interval '30 days'\n                          AND t.status NOT IN ('CLOSED', 'DUPLICATE', 'REJECTED'))::int\n         AS open_over_30_days,\n       min(t.created_at) AS oldest,\n       max(t.updated_at) AS last_activity\n  FROM v, tickets t\n GROUP BY t.status\n ORDER BY tickets DESC;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify({ scope: \"all\" })] }}"
+        },
+        "descriptionType": "manual",
+        "toolDescription": "How many tickets are in each status across the whole history, with how many were opened in the last 7 days and how many in that status have been open more than 30 days. Takes no arguments. Use for 'how many' questions rather than counting search results yourself."
+      },
+      "name": "ticket_counts",
+      "type": "n8n-nodes-base.postgresTool",
+      "typeVersion": 2.6,
+      "position": [
+        580,
+        -80
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_POSTGRES_CREDENTIAL_ID",
+          "name": "CBM Postgres"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH v AS (SELECT $1::jsonb AS p),\n     f AS (SELECT (v.p->>'ticketId')::int AS ticket_id,\n                  LEAST(COALESCE(NULLIF(v.p->>'limit', '')::int, 50), 200) AS max_rows\n             FROM v)\nSELECT e.created_at, e.event,\n       e.payload->>'from' AS status_from,\n       e.payload->>'to'   AS status_to,\n       left(e.payload::text, 400) AS payload\n  FROM f, ticket_events e\n WHERE e.ticket_id = f.ticket_id\n ORDER BY e.created_at DESC, e.id DESC\n LIMIT (SELECT max_rows FROM f);",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify({ ticketId: $fromAI(\"ticket_id\", \"The numeric id of the ticket whose history is wanted\", \"number\"), limit: $fromAI(\"limit\", \"Maximum events, default 50, capped at 200\", \"number\") })] }}"
+        },
+        "descriptionType": "manual",
+        "toolDescription": "The audit trail of ONE ticket, newest first: every recorded event, and for status changes the status it moved from and to. Use for 'what happened to', 'when was it assigned', 'how long has it been in this status'. limit defaults to 50, max 200."
+      },
+      "name": "ticket_history",
+      "type": "n8n-nodes-base.postgresTool",
+      "typeVersion": 2.6,
+      "position": [
+        800,
+        -80
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_POSTGRES_CREDENTIAL_ID",
+          "name": "CBM Postgres"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH v AS (SELECT $1::jsonb AS p),\n     f AS (SELECT LEAST(GREATEST(COALESCE(NULLIF(v.p->>'olderThanDays', '')::int, 30), 1), 365)\n                    AS stale_days\n             FROM v)\nSELECT t.id, t.status, left(t.description, 200) AS description,\n       t.ifc_name, t.ifc_storey,\n       te.full_name AS technician_name, te.email AS technician_email,\n       t.created_at, t.updated_at,\n       date_part('day', now() - t.created_at)::int AS age_days,\n       date_part('day', now() - t.updated_at)::int AS days_since_last_change\n  FROM f, tickets t\n  LEFT JOIN technicians te ON te.id = t.technician_id\n WHERE t.status NOT IN ('CLOSED', 'DUPLICATE', 'REJECTED')\n   AND t.created_at < now() - make_interval(days => f.stale_days)\n ORDER BY t.created_at\n LIMIT 200;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify({ olderThanDays: $fromAI(\"older_than_days\", \"Age threshold in days, default 30\", \"number\") })] }}"
+        },
+        "descriptionType": "manual",
+        "toolDescription": "Tickets still open after a given age, oldest first, with age in days and days since anything last changed on them. older_than_days defaults to 30, which is the same threshold the weekly report marks. Excludes CLOSED, DUPLICATE and REJECTED."
+      },
+      "name": "overdue_tickets",
+      "type": "n8n-nodes-base.postgresTool",
+      "typeVersion": 2.6,
+      "position": [
+        140,
+        100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_POSTGRES_CREDENTIAL_ID",
+          "name": "CBM Postgres"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH v AS (SELECT $1::jsonb AS p)\nSELECT te.full_name, te.email, te.zone, te.active, te.rating, te.jobs_completed,\n       count(t.id) FILTER (WHERE t.status NOT IN ('CLOSED', 'DUPLICATE', 'REJECTED'))::int\n         AS open_tickets,\n       count(t.id) FILTER (WHERE t.status = 'CLOSED')::int AS closed_tickets,\n       count(t.id) FILTER (WHERE t.status NOT IN ('CLOSED', 'DUPLICATE', 'REJECTED')\n                             AND t.created_at < now() - interval '30 days')::int\n         AS open_over_30_days,\n       round(avg(date_part('epoch', t.closed_at - t.created_at) / 86400.0)\n             FILTER (WHERE t.closed_at IS NOT NULL)::numeric, 1) AS avg_days_to_close,\n       te.last_assigned_at\n  FROM v, technicians te\n  LEFT JOIN tickets t ON t.technician_id = te.id\n GROUP BY te.id, te.full_name, te.email, te.zone, te.active, te.rating,\n          te.jobs_completed, te.last_assigned_at\n ORDER BY open_tickets DESC, te.full_name;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify({ scope: \"all\" })] }}"
+        },
+        "descriptionType": "manual",
+        "toolDescription": "Per technician: open tickets, closed tickets, how many of their open tickets are over 30 days, average days to close, rating, zone and when they were last assigned. Takes no arguments. Use for 'who is busiest', 'what is X working on' (then follow with ticket_search), and workload balance questions."
+      },
+      "name": "technician_workload",
+      "type": "n8n-nodes-base.postgresTool",
+      "typeVersion": 2.6,
+      "position": [
+        360,
+        100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_POSTGRES_CREDENTIAL_ID",
+          "name": "CBM Postgres"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH v AS (SELECT $1::jsonb AS p),\n     g AS (SELECT CASE WHEN lower(COALESCE(NULLIF(v.p->>'bucket', ''), 'week')) = 'month'\n                       THEN 'month' ELSE 'week' END AS unit,\n                  LEAST(GREATEST(COALESCE(NULLIF(v.p->>'buckets', '')::int, 12), 1), 52) AS n\n             FROM v),\n     span AS (SELECT g.unit,\n                     date_trunc(g.unit, now()) - (g.n::text || ' ' || g.unit)::interval\n                       AS from_ts\n                FROM g),\n     opened AS (SELECT date_trunc(s.unit, t.created_at) AS bucket, count(*)::int AS opened\n                  FROM span s, tickets t\n                 WHERE t.created_at >= s.from_ts\n                 GROUP BY 1),\n     closed AS (SELECT date_trunc(s.unit, t.closed_at) AS bucket, count(*)::int AS closed\n                  FROM span s, tickets t\n                 WHERE t.closed_at >= s.from_ts\n                 GROUP BY 1)\nSELECT to_char(COALESCE(o.bucket, c.bucket), 'YYYY-MM-DD') AS period_start,\n       (SELECT unit FROM span) AS period,\n       COALESCE(o.opened, 0) AS opened,\n       COALESCE(c.closed, 0) AS closed\n  FROM opened o\n  FULL JOIN closed c ON c.bucket = o.bucket\n ORDER BY 1 DESC;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify({ bucket: $fromAI(\"bucket\", \"Either week or month; default week\", \"string\"), buckets: $fromAI(\"buckets\", \"How many periods back, default 12, max 52\", \"number\") })] }}"
+        },
+        "descriptionType": "manual",
+        "toolDescription": "Tickets opened and closed per period, newest period first, for trend questions ('are we keeping up', 'is the backlog growing'). bucket is 'week' or 'month' (default week); buckets is how many periods back, default 12, max 52."
+      },
+      "name": "throughput_stats",
+      "type": "n8n-nodes-base.postgresTool",
+      "typeVersion": 2.6,
+      "position": [
+        580,
+        100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_POSTGRES_CREDENTIAL_ID",
+          "name": "CBM Postgres"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH v AS (SELECT $1::jsonb AS p)\nSELECT c.table_name, c.column_name, c.data_type, c.is_nullable\n  FROM v, information_schema.columns c\n WHERE c.table_schema = 'public'\n   AND c.table_name IN ('tickets', 'technicians', 'ticket_events')\n ORDER BY c.table_name, c.ordinal_position;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify({ scope: \"all\" })] }}"
+        },
+        "descriptionType": "manual",
+        "toolDescription": "Read-only. The columns and types that actually exist on tickets, technicians and ticket_events. Call this only when another tool failed with an error naming a missing column or an unknown relation, then retry that call with corrected arguments. Cannot modify anything."
+      },
+      "name": "inspect_schema",
+      "type": "n8n-nodes-base.postgresTool",
+      "typeVersion": 2.6,
+      "position": [
+        800,
+        100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_POSTGRES_CREDENTIAL_ID",
+          "name": "CBM Postgres"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO ticket_events (ticket_id, event, payload)\nVALUES (NULL, 'CBM_WF3_QUERY',\n        jsonb_build_object('session', $1::text,\n                           'question', $2::text,\n                           'answer_chars', ($3::text)::int))\nRETURNING id;",
+        "options": {
+          "queryReplacement": "={{ [$(\"FM Chat Context\").first().json.sessionId, $(\"FM Chat Context\").first().json.question, String(String($json.output || \"\").length)] }}"
+        }
+      },
+      "name": "Log FM Question",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        180,
+        -340
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_POSTGRES_CREDENTIAL_ID",
+          "name": "CBM Postgres"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// The chat trigger returns whatever the last node emits, so the answer is\n// shaped here rather than left to depend on the logging node's output.\n//\n// The agent runs with continueRegularOutput: a tool failure it could not recover\n// from produces no `output` rather than an error page in the chat window. Say so\n// plainly instead of returning an empty bubble.\nconst ctx = $('FM Chat Context').first().json;\n\nlet answer = '';\ntry {\n  answer = String($('FM Dashboard Agent').first().json.output || '').trim();\n} catch (e) {\n  answer = '';\n}\n\nif (!answer) {\n  answer = 'I could not complete that lookup. The database or the model did not '\n    + 'answer. Nothing was changed - this dashboard only reads. Please try again, '\n    + 'or ask a narrower question.';\n}\n\nif (ctx.truncated) {\n  answer += '\\n\\n_(Your question was longer than 1500 characters; only the first '\n    + '1500 were used.)_';\n}\n\nreturn [{ json: { output: answer, sessionId: ctx.sessionId } }];"
+      },
+      "name": "Chat Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        -340
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtDay": [
+                1
+              ],
+              "triggerAtHour": 7,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      },
+      "name": "Weekly Report Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -720,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// The reporting window: the seven days ending at the moment the schedule fires.\n//\n// Fixed rather than derived from the previous run, so a report can be re-run by\n// hand and produce the same figures. The window is recorded with the report, so\n// a skipped week is visible in ticket_events rather than silently absorbed.\nconst now = new Date();\nconst start = new Date(now.getTime() - 7 * 86400000);\nconst iso = (d) => d.toISOString();\nconst day = (d) => new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Rome',dateStyle:'medium',timeStyle:'short'}).format(d);\n\nreturn [{\n  json: {\n    periodStart: iso(start),\n    periodEnd: iso(now),\n    periodLabel: day(start) + ' to ' + day(now) + ' (Europe/Rome)',\n    staleDays: 30,\n    generatedAt: iso(now),\n  },\n}];"
+      },
+      "name": "Report Window",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -500,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH v AS (SELECT $1::jsonb AS p),\n     w AS (SELECT (v.p->>'periodStart')::timestamptz AS from_ts,\n                  (v.p->>'periodEnd')::timestamptz   AS to_ts,\n                  LEAST(GREATEST(COALESCE(NULLIF(v.p->>'staleDays', '')::int, 30), 1), 365)\n                    AS stale_days\n             FROM v),\n     changes AS (\n       SELECT e.ticket_id, e.created_at AS changed_at,\n              e.payload->>'from' AS status_from,\n              e.payload->>'to'   AS status_to,\n              t.status AS current_status,\n              left(t.description, 200) AS description,\n              t.ifc_name, t.ifc_storey,\n              te.full_name AS technician_name,\n              date_part('day', now() - t.created_at)::int AS age_days\n         FROM w, ticket_events e\n         JOIN tickets t ON t.id = e.ticket_id\n         LEFT JOIN technicians te ON te.id = t.technician_id\n        WHERE e.event = 'CBM_STATUS_CHANGED'\n          AND e.created_at >= w.from_ts\n          AND e.created_at <  w.to_ts\n        ORDER BY e.created_at ASC, e.id ASC\n        LIMIT 500),\n     stale AS (\n       SELECT t.id, t.status, left(t.description, 200) AS description,\n              t.ifc_name, t.ifc_storey,\n              te.full_name AS technician_name, te.email AS technician_email,\n              t.created_at, t.updated_at,\n              date_part('day', now() - t.created_at)::int AS age_days,\n              date_part('day', now() - t.updated_at)::int AS days_since_last_change\n         FROM w, tickets t\n         LEFT JOIN technicians te ON te.id = t.technician_id\n        WHERE t.status NOT IN ('CLOSED', 'DUPLICATE', 'REJECTED')\n          AND t.created_at < now() - make_interval(days => w.stale_days)\n        ORDER BY t.created_at ASC, t.id ASC\n        LIMIT 200),\n     by_status AS (SELECT t.status, count(*)::int AS tickets\n                     FROM v, tickets t\n                    GROUP BY t.status),\n     totals AS (\n       SELECT (SELECT count(*) FROM tickets)::int AS tickets_all_time,\n              (SELECT count(*) FROM tickets t\n                WHERE t.status NOT IN ('CLOSED', 'DUPLICATE', 'REJECTED'))::int AS open_now,\n              (SELECT count(*) FROM w, tickets t\n                WHERE t.created_at >= w.from_ts AND t.created_at < w.to_ts)::int\n                AS opened_in_window,\n              (SELECT count(*) FROM w, tickets t\n                WHERE t.closed_at >= w.from_ts AND t.closed_at < w.to_ts)::int\n                AS closed_in_window,\n              (SELECT count(*) FROM w, tickets t\n                WHERE t.status NOT IN ('CLOSED', 'DUPLICATE', 'REJECTED')\n                  AND t.created_at < now() - make_interval(days => w.stale_days))::int\n                AS stale_now)\nSELECT jsonb_build_object(\n         'period_start', (SELECT from_ts FROM w),\n         'period_end',   (SELECT to_ts FROM w),\n         'stale_days',   (SELECT stale_days FROM w),\n         'totals',       (SELECT to_jsonb(totals) FROM totals),\n         'by_status',    COALESCE((SELECT jsonb_agg(to_jsonb(by_status)\n                                            ORDER BY by_status.tickets DESC)\n                                     FROM by_status), '[]'::jsonb),\n         'changes',      COALESCE((SELECT jsonb_agg(to_jsonb(changes)\n                                            ORDER BY changes.changed_at)\n                                     FROM changes), '[]'::jsonb),\n         'stale',        COALESCE((SELECT jsonb_agg(to_jsonb(stale)\n                                            ORDER BY stale.age_days DESC)\n                                     FROM stale), '[]'::jsonb)\n       ) AS report;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($json)] }}"
+        }
+      },
+      "name": "Collect Weekly Data",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -280,
+        420
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_POSTGRES_CREDENTIAL_ID",
+          "name": "CBM Postgres"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Turn the single JSON document the query returned into the report.\n//\n// Every figure here was computed by SQL. Nothing in this node counts anything:\n// it groups, sorts and formats, so the numbers in the email are the numbers in\n// the database and the model that writes the covering paragraph later cannot\n// change them.\nconst r = $input.first().json.report || {};\nconst w = $('Report Window').first().json;\n\nconst totals = r.totals || {};\nconst byStatus = r.by_status || [];\nconst changes = r.changes || [];\nconst stale = r.stale || [];\nconst staleDays = r.stale_days || 30;\n\nconst esc = (s) => String(s == null ? '' : s)\n  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst day = (s) => (s ? new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Rome',dateStyle:'medium'}).format(new Date(s)) : '');\n\n// --- status changes, grouped into one row per ticket ----------------------\n// A ticket that moved RECEIVED -> ASSIGNED -> WORK_DONE in one week is one line\n// showing the path, not three lines the manager has to reassemble.\nconst byTicket = new Map();\nfor (const c of changes) {\n  const key = c.ticket_id;\n  if (!byTicket.has(key)) {\n    byTicket.set(key, {\n      ticket_id: key,\n      description: c.description || '',\n      ifc_name: c.ifc_name || '',\n      ifc_storey: c.ifc_storey || '',\n      technician_name: c.technician_name || '',\n      current_status: c.current_status || '',\n      age_days: c.age_days,\n      first_from: c.status_from,\n      steps: [],\n      last_at: c.changed_at,\n    });\n  }\n  const row = byTicket.get(key);\n  row.steps.push(c.status_to);\n  row.current_status = c.current_status || row.current_status;\n  row.last_at = c.changed_at;\n}\n\nconst movedTickets = Array.from(byTicket.values())\n  .sort((a, b) => String(b.last_at).localeCompare(String(a.last_at)));\n\nfor (const m of movedTickets) {\n  m.path = [m.first_from == null ? 'NEW' : m.first_from].concat(m.steps).join(' -> ');\n  m.closed_this_week = m.steps.includes('CLOSED');\n  m.still_open = !['CLOSED', 'DUPLICATE', 'REJECTED'].includes(m.current_status);\n  // A ticket that moved this week but is already past the stale threshold is\n  // still overdue: movement is not progress.\n  m.overdue = m.still_open && Number(m.age_days) >= staleDays;\n}\n\nconst staleIds = new Set(stale.map((s) => s.id));\nconst movedIds = new Set(movedTickets.map((m) => m.ticket_id));\n// Overdue and untouched all week: the worst category, listed first.\nfor (const s of stale) {\n  s.moved_this_week = movedIds.has(s.id);\n}\nconst stalled = stale.filter((s) => !s.moved_this_week);\n\nconst subject = '[CBM] Weekly maintenance report ' + w.periodLabel\n  + ' - ' + movedTickets.length + ' updated, ' + stale.length + ' over '\n  + staleDays + ' days';\n\n// --- tables ---------------------------------------------------------------\nconst th = 'style=\"text-align:left;padding:6px 10px;border-bottom:2px solid #444;font-size:13px\"';\nconst td = 'style=\"padding:6px 10px;border-bottom:1px solid #ddd;font-size:13px\"';\nconst tdWarn = 'style=\"padding:6px 10px;border-bottom:1px solid #ddd;font-size:13px;color:#b00020;font-weight:bold\"';\n\n// `rows` is already rendered HTML, not an array: each caller builds its own\n// row shape and this only wraps them.\nconst table = (headers, rows) => !rows ? '' :\n  '<table style=\"border-collapse:collapse;width:100%;margin:8px 0 18px 0\">'\n  + '<tr>' + headers.map((h) => '<th ' + th + '>' + esc(h) + '</th>').join('') + '</tr>'\n  + rows + '</table>';\n\nconst statusRows = byStatus.map((s) =>\n  '<tr><td ' + td + '>' + esc(s.status) + '</td><td ' + td + '>' + s.tickets + '</td></tr>').join('');\n\nconst changeRows = movedTickets.map((m) =>\n  '<tr>'\n  + '<td ' + td + '>#' + m.ticket_id + '</td>'\n  + '<td ' + td + '>' + esc(m.path) + '</td>'\n  + '<td ' + (m.overdue ? tdWarn : td) + '>' + esc(m.current_status)\n  + (m.overdue ? ' (' + m.age_days + 'd old)' : '') + '</td>'\n  + '<td ' + td + '>' + esc(m.ifc_name || m.description.slice(0, 60)) + '</td>'\n  + '<td ' + td + '>' + esc(m.technician_name || 'unassigned') + '</td>'\n  + '</tr>').join('');\n\nconst staleRows = stale.map((s) =>\n  '<tr>'\n  + '<td ' + td + '>#' + s.id + '</td>'\n  + '<td ' + tdWarn + '>' + s.age_days + ' days</td>'\n  + '<td ' + td + '>' + esc(s.status) + '</td>'\n  + '<td ' + td + '>' + (s.moved_this_week ? 'moved this week'\n      : 'no change for ' + s.days_since_last_change + ' days') + '</td>'\n  + '<td ' + td + '>' + esc(s.ifc_name || s.description.slice(0, 60)) + '</td>'\n  + '<td ' + td + '>' + esc(s.technician_name || 'unassigned') + '</td>'\n  + '</tr>').join('');\n\nconst sections = [];\nsections.push('<h2 style=\"font-size:16px;margin:22px 0 4px 0\">Where everything stands</h2>'\n  + '<p style=\"font-size:13px;margin:0 0 6px 0\">'\n  + '<b>' + (totals.opened_in_window || 0) + '</b> raised and '\n  + '<b>' + (totals.closed_in_window || 0) + '</b> closed this week. '\n  + '<b>' + (totals.open_now || 0) + '</b> open now, of '\n  + '<b>' + (totals.tickets_all_time || 0) + '</b> ever raised.</p>'\n  + table(['Status', 'Tickets'], statusRows));\n\nsections.push('<h2 style=\"font-size:16px;margin:22px 0 4px 0\">Changed status this week ('\n  + movedTickets.length + ')</h2>'\n  + (movedTickets.length\n     ? table(['Ticket', 'Path', 'Now', 'Element', 'Technician'], changeRows)\n     : '<p style=\"font-size:13px\">No ticket changed status during this period.</p>'));\n\nsections.push('<h2 style=\"font-size:16px;margin:22px 0 4px 0;color:#b00020\">'\n  + 'Open longer than ' + staleDays + ' days (' + stale.length + ')</h2>'\n  + (stale.length\n     ? '<p style=\"font-size:13px;margin:0 0 6px 0\">' + stalled.length\n       + ' of these did not move at all this week.</p>'\n       + table(['Ticket', 'Age', 'Status', 'Last change', 'Element', 'Technician'], staleRows)\n     : '<p style=\"font-size:13px\">Nothing has been outstanding for more than '\n       + staleDays + ' days.</p>'));\n\nconst body = sections.join('');\n\n// --- what the model is allowed to see -------------------------------------\n// Figures only, already computed. The paragraph it writes is a covering note on\n// these numbers; it is given nothing it could use to invent a different set.\nconst facts = {\n  period: w.periodLabel,\n  period_start: w.periodStart,\n  period_end: w.periodEnd,\n  stale_days: staleDays,\n  opened_in_window: totals.opened_in_window || 0,\n  closed_in_window: totals.closed_in_window || 0,\n  open_now: totals.open_now || 0,\n  tickets_all_time: totals.tickets_all_time || 0,\n  tickets_changed_status: movedTickets.length,\n  tickets_closed_this_week: movedTickets.filter((m) => m.closed_this_week).length,\n  overdue_total: stale.length,\n  overdue_untouched_this_week: stalled.length,\n  oldest_overdue_days: stale.length ? Math.max.apply(null, stale.map((s) => Number(s.age_days) || 0)) : 0,\n  by_status: byStatus,\n  overdue_tickets: stale.slice(0, 10).map((s) => ({\n    id: s.id, status: s.status, age_days: s.age_days,\n    technician: s.technician_name || 'unassigned',\n    element: s.ifc_name || '', moved_this_week: s.moved_this_week,\n  })),\n};\n\nconst narrative_prompt = [\n  'You are writing the opening paragraph of a facility maintenance report for the',\n  'facility manager. The figures below are already final and were computed from the',\n  'database. Write three or four sentences of plain prose.',\n  '',\n  'Rules:',\n  '- Use only the figures given. Do not introduce any number that is not below.',\n  '- Say what changed this week, then what needs the manager\\'s attention.',\n  '- Name at most three specific ticket numbers, chosen from overdue_tickets.',\n  '- No greeting, no sign-off, no bullet points, no headings, no markdown.',\n  '- If nothing moved and nothing is overdue, say so in one sentence.',\n  '',\n  'FIGURES:',\n  JSON.stringify(facts, null, 2),\n].join('\\n');\n\nreturn [{\n  json: {\n    subject,\n    body_html: body,\n    period_label: w.periodLabel,\n    generated_at: w.generatedAt,\n    changed_count: movedTickets.length,\n    stale_count: stale.length,\n    stalled_count: stalled.length,\n    stale_days: staleDays,\n    facts,\n    narrative_prompt,\n  },\n}];"
+      },
+      "name": "Build Weekly Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -60,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.narrative_prompt }}"
+      },
+      "name": "Weekly Narrative",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.5,
+      "position": [
+        160,
+        420
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "id",
+          "value": "claude-sonnet-4-6"
+        },
+        "options": {
+          "temperature": 0.2,
+          "maxTokensToSample": 600
+        }
+      },
+      "name": "Narrative Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [
+        140,
+        620
+      ],
+      "credentials": {
+        "anthropicApi": {
+          "id": "REPLACE_ANTHROPIC_CREDENTIAL_ID",
+          "name": "CBM Anthropic"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Assemble the email. The narrative chain runs with continueRegularOutput, so a\n// model outage costs the opening paragraph and nothing else: the tables below it\n// are already built and the report still goes out on time.\nconst b = $('Build Weekly Report').first().json;\n\nlet narrative = '';\ntry {\n  narrative = String($input.first().json.text || '').trim();\n} catch (e) {\n  narrative = '';\n}\n\n// A model that ignored the instructions and emitted JSON or a heading is not\n// worth printing above the manager's figures.\nif (narrative.startsWith('{') || narrative.startsWith('#') || narrative.length > 1200) {\n  narrative = '';\n}\n\nconst esc = (s) => String(s == null ? '' : s)\n  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n\nconst opening = narrative\n  ? '<p style=\"font-size:14px;line-height:1.5\">' + esc(narrative) + '</p>'\n  : '<p style=\"font-size:13px;color:#666\"><i>The written summary could not be '\n    + 'generated for this run; the figures below are complete.</i></p>';\n\nconst html = '<div style=\"font-family:-apple-system,Segoe UI,Roboto,sans-serif;'\n  + 'max-width:820px;color:#222\">'\n  + '<h1 style=\"font-size:19px;margin:0 0 2px 0\">Weekly maintenance report</h1>'\n  + '<p style=\"font-size:12px;color:#666;margin:0 0 14px 0\">' + esc(b.period_label)\n  + ' &middot; generated ' + esc(new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Rome',dateStyle:'medium',timeStyle:'short'}).format(new Date(b.generated_at)))\n  + ' (Europe/Rome)</p>'\n  + opening\n  + b.body_html\n  + '<p style=\"font-size:11px;color:#888;border-top:1px solid #ddd;padding-top:8px\">'\n  + 'Status changes are read from the CBM_STATUS_CHANGED audit trail. '\n  + 'Ask the dashboard chat for anything not shown here - it can see the full '\n  + 'ticket history.</p>'\n  + '</div>';\n\nreturn [{\n  json: {\n    subject: b.subject,\n    html,\n    narrative_used: narrative.length > 0,\n    record: {\n      period_start: b.facts.period_start,\n      period_end: b.facts.period_end,\n      changed: b.changed_count,\n      overdue: b.stale_count,\n      overdue_untouched: b.stalled_count,\n      opened: b.facts.opened_in_window,\n      closed: b.facts.closed_in_window,\n      open_now: b.facts.open_now,\n      narrative_used: narrative.length > 0,\n    },\n  },\n}];"
+      },
+      "name": "Compose Weekly Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        380,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "fm@test.invalid",
+        "subject": "={{ $json.subject }}",
+        "emailType": "html",
+        "message": "={{ $json.html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "name": "Email Weekly Report",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        600,
+        420
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "REPLACE_GMAIL_CREDENTIAL_ID",
+          "name": "CBM Gmail"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO ticket_events (ticket_id, event, payload)\nVALUES (NULL, 'CBM_WF3_REPORT', $1::jsonb)\nRETURNING id;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($(\"Compose Weekly Email\").first().json.record)] }}"
+        }
+      },
+      "name": "Record Weekly Report",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        820,
+        420
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_POSTGRES_CREDENTIAL_ID",
+          "name": "CBM Postgres"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "content": "## 1 - Chat dashboard\nHosted chat, Basic Auth. The facility manager asks in plain language; the agent answers **only** from tool results and **cannot write** - every tool is a SELECT with fixed SQL and typed `$fromAI` arguments.\n\nQuestions are logged as `CBM_WF3_QUERY` events.",
+        "width": 460,
+        "height": 190,
+        "color": 4
+      },
+      "name": "Sticky - 1 - Chat dashboard",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -760,
+        -480
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 2 - Read-only tool belt\nEight tools over the **full** ticket history. `inspect_schema` exists so a tool failure naming a missing column can be diagnosed and retried rather than reported as 'I don't know'.\n\nNo tool accepts SQL from the model.",
+        "width": 880,
+        "height": 120,
+        "color": 7
+      },
+      "name": "Sticky - 2 - Read-only tool belt",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        140,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 3 - Weekly report\nMondays 07:00, covering the previous 7 days.\n\n`Collect Weekly Data` returns the whole report as one JSON document in one execution. Status changes come from the `CBM_STATUS_CHANGED` trigger installed by `schema_wf3_dashboard.sql`, not from `updated_at`.\n\nTickets open longer than **30 days** are listed and marked. The model writes only the covering paragraph; if it fails the email still goes out complete.",
+        "width": 560,
+        "height": 210,
+        "color": 5
+      },
+      "name": "Sticky - 3 - Weekly report",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -760,
+        180
+      ]
+    }
+  ],
+  "connections": {
+    "FM Chat": {
+      "main": [
+        [
+          {
+            "node": "FM Chat Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FM Chat Context": {
+      "main": [
+        [
+          {
+            "node": "Question Asked?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Question Asked?": {
+      "main": [
+        [
+          {
+            "node": "FM Dashboard Agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Empty Question Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FM Dashboard Agent": {
+      "main": [
+        [
+          {
+            "node": "Log FM Question",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log FM Question": {
+      "main": [
+        [
+          {
+            "node": "Chat Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Weekly Report Schedule": {
+      "main": [
+        [
+          {
+            "node": "Report Window",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report Window": {
+      "main": [
+        [
+          {
+            "node": "Collect Weekly Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Weekly Data": {
+      "main": [
+        [
+          {
+            "node": "Build Weekly Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Weekly Report": {
+      "main": [
+        [
+          {
+            "node": "Weekly Narrative",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Weekly Narrative": {
+      "main": [
+        [
+          {
+            "node": "Compose Weekly Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compose Weekly Email": {
+      "main": [
+        [
+          {
+            "node": "Email Weekly Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Weekly Report": {
+      "main": [
+        [
+          {
+            "node": "Record Weekly Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FM Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "FM Dashboard Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FM Chat Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "FM Dashboard Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Narrative Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Weekly Narrative",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ticket_lookup": {
+      "ai_tool": [
+        [
+          {
+            "node": "FM Dashboard Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ticket_search": {
+      "ai_tool": [
+        [
+          {
+            "node": "FM Dashboard Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ticket_counts": {
+      "ai_tool": [
+        [
+          {
+            "node": "FM Dashboard Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ticket_history": {
+      "ai_tool": [
+        [
+          {
+            "node": "FM Dashboard Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "overdue_tickets": {
+      "ai_tool": [
+        [
+          {
+            "node": "FM Dashboard Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "technician_workload": {
+      "ai_tool": [
+        [
+          {
+            "node": "FM Dashboard Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "throughput_stats": {
+      "ai_tool": [
+        [
+          {
+            "node": "FM Dashboard Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "inspect_schema": {
+      "ai_tool": [
+        [
+          {
+            "node": "FM Dashboard Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Rome"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "id": "cbmIntake2026091503",
+  "active": false
+}

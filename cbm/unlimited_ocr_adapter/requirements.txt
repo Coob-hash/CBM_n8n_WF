@@ -1,0 +1,4 @@
+fastapi==0.141.1
+httpx==0.28.1
+pymupdf==1.27.2.2
+uvicorn==0.53.0

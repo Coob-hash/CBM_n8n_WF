@@ -1,0 +1,14 @@
+FROM python:3.13-slim@sha256:9d2e5553305c7c7b0097999bb17187c69b921ccd6bc9d40e4bb5ebe652c00285
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+WORKDIR /app
+COPY app/requirements-lock.txt /app/requirements-lock.txt
+RUN pip install --no-cache-dir -r /app/requirements-lock.txt
+RUN useradd --uid 10001 --create-home cbm
+RUN mkdir -p /app/models && chown cbm:cbm /app/models
+COPY --chown=cbm:cbm app/ifc_service.py app/capture_normalize.py app/service_lock.py app/calibrate_registration.py /app/
+COPY --chown=cbm:cbm app/knowledge/ /app/knowledge/
+COPY --chown=cbm:cbm initialize_model.py /app/initialize_model.py
+COPY --chown=cbm:cbm demo_api.py report_photo.py case_study.py /app/
+COPY --chown=cbm:cbm templates/technician-report/technician-portal.html /app/technician-portal.html
+USER cbm
+CMD ["python", "-m", "uvicorn", "demo_api:app", "--host", "0.0.0.0", "--port", "8000"]

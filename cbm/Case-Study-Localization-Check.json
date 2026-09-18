@@ -1,0 +1,178 @@
+{
+  "id": "cbmCaseMultisetCheck20260915",
+  "name": "CBM Maddaloni - Test 11 photos in MultiSet (no tickets or email)",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Rome"
+  },
+  "nodes": [
+    {
+      "id": "Run_MultiSet_Case_Test",
+      "name": "Run MultiSet Case Test",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.multiset.ai/v1/m2m/token",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "name": "MultiSet Diagnostic Token",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        200,
+        0
+      ],
+      "credentials": {},
+      "id": "case_token"
+    },
+    {
+      "id": "Load_Case_Queries",
+      "name": "Load Case Queries",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        400,
+        0
+      ],
+      "parameters": {
+        "url": "={{ $env.IFC_SERVICE_URL + '/case-study/queries' }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "Split_Case_Photos",
+      "name": "Split Case Photos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        0
+      ],
+      "parameters": {
+        "jsCode": "return $json.captures.map(c=>({json:c}));"
+      }
+    },
+    {
+      "id": "Localize_Case_Photos",
+      "name": "Localize Case Photos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        800,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.multiset.ai/v1/vps/map/query",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('MultiSet Diagnostic Token').first().json.token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "Localization_Results",
+      "name": "Localization Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const captures=$('Split Case Photos').all();\nreturn $input.all().map((item,i)=>{const r=item.json; const c=captures[i].json;\n return {json:{file:c.file,sourceSha256:c.source_sha256,mapCode:c.request.mapCode,\n  isRightHanded:true,intrinsicsQuality:'EXIF_ESTIMATE',poseFound:r.poseFound===true,\n  confidence:Number.isFinite(r.confidence)?r.confidence:null,position:r.poseFound?r.position:null,\n  rotation:r.poseFound?r.rotation:null,returnedMapCodes:r.mapCodes||[],\n  queryFailed:!!r.error,assetConfirmed:false}};});"
+      }
+    }
+  ],
+  "connections": {
+    "Run MultiSet Case Test": {
+      "main": [
+        [
+          {
+            "node": "MultiSet Diagnostic Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MultiSet Diagnostic Token": {
+      "main": [
+        [
+          {
+            "node": "Load Case Queries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Case Queries": {
+      "main": [
+        [
+          {
+            "node": "Split Case Photos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Case Photos": {
+      "main": [
+        [
+          {
+            "node": "Localize Case Photos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Localize Case Photos": {
+      "main": [
+        [
+          {
+            "node": "Localization Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

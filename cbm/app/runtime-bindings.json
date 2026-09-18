@@ -1,0 +1,61 @@
+{
+  "credentials": {
+    "ticketPostgres": {
+      "id": "cbmLocalPg20260917",
+      "name": "CBM Postgres - Local Demo"
+    },
+    "knowledgePostgres": {
+      "id": "cbmSupabasePgIsteaGroup1",
+      "name": "CBM Supabase Postgres - ISTEA_Group1"
+    },
+    "gmail": {
+      "id": "R5EQDxDzCMYdMH9U",
+      "name": "Gmail account 3"
+    },
+    "drive": {
+      "id": "MZz9FdxIgYiIyTjp",
+      "name": "Google Drive account 2"
+    },
+    "anthropic": {
+      "id": "rj0J6fDoCBVNb7d1",
+      "name": "Anthropic account"
+    },
+    "openai": {
+      "id": "f0y7IjBcxpOEn1zU",
+      "name": "OpenAI account"
+    },
+    "openrouter": {
+      "id": "cbmOpenRouterIstea20260916",
+      "name": "CBM OpenRouter - New Account"
+    },
+    "supabase": {
+      "id": "vwpdbfFtXMR4D7Nh",
+      "name": "Supabase account 3"
+    },
+    "knowledgeHeader": {
+      "id": "cbmKnowledgeHeader20260917",
+      "name": "CBM Knowledge Service Header"
+    },
+    "multisetBasic": {
+      "id": "cSH3pGgI0TpKTlEf",
+      "name": "Unnamed credential"
+    },
+    "dashboardBasic": {
+      "id": "ldA19gquy2yCgVZG",
+      "name": "FM Chat Login"
+    }
+  },
+  "fmEmail": "gruppo1isteagiovani@gmail.com",
+  "incomingFolderId": "199SEqJvMdyufnea4zrwabimyztWTDYJ7",
+  "completedFolderId": "1M0uJMr10KQBJPDp6aua1cgkOwXqWbmeC",
+  "embeddingModel": "text-embedding-3-small",
+  "knowledgeSnapshotUrl": "http://knowledge-service:8001/knowledge/snapshot",
+  "workflowCredentials": {
+    "wf1_ticket_intake_and_dispatch.json": {
+      "drive": {
+        "id": "DAthzSNctn0ZtGee",
+        "name": "Google Drive account 3"
+      }
+    }
+  }
+}

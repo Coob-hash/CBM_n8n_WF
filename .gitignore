@@ -3,14 +3,39 @@
 .env.*
 !.env.example
 !.env.template
+cbm/cbm.env
+cbm/demo.local.json
+cbm/demo.validation.json
+cbm/case-study/registration.local.json
 deployment.local.json
 database/site.local.json
 **/credentials.json
 **/credentials.local.json
+**/*-credentials.json
 **/token.json
 **/tokens.json
 *.pem
 *.key
+
+# Generated or private CBM content
+cbm/workflows-configured/
+cbm/technical_sheets/*.pdf
+cbm/catalog/documents/*
+cbm/validation/private-*
+cbm/tests/all-workflows.json
+cbm/case-study/upload-ready/
+
+# Local run artifacts: validation snapshots, database dumps and checkpoints.
+# Source SQL lives in database/; nothing else with a .sql extension is tracked.
+validation/
+validation-*/
+validation-*.json
+database-reset-backups/
+wf2-checkpoints/
+backups/
+*.dump
+*.sql
+!database/**/*.sql
 
 # Python environments, caches, and build artifacts
 __pycache__/
@@ -49,7 +74,7 @@ Thumbs.db
 *.tmp
 *.bak
 *.bak-*
-
-# Deliberately tracked: workflow exports, the required Phase A baseline,
-# configuration examples and validation report.
 ~$*
+
+# n8n database export (contains credential and deployment-key entities)
+cbm/tests/execution-audit/

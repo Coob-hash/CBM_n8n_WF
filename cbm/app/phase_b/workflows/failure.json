@@ -1,0 +1,395 @@
+{
+  "updatedAt": "2026-09-17T13:14:49.751Z",
+  "createdAt": "2026-09-15T21:16:20.828Z",
+  "id": "aFLHB2kJNkSJ7Rig",
+  "name": "[CBM Intake Approval 2026.09.15] Dispatch - Record Incomplete Execution",
+  "description": null,
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "ticketId"
+            },
+            {
+              "name": "sourceKey"
+            }
+          ]
+        }
+      },
+      "id": "f4f61069-9451-4237-ae96-f454842e89a5",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nWITH target AS (WITH target AS (\n SELECT t.* FROM tickets t WHERE\n (NULLIF($1::jsonb->>'ticketId','') IS NOT NULL AND t.id=(NULLIF($1::jsonb->>'ticketId',''))::int)\n OR (NULLIF($1::jsonb->>'ticketId','') IS NULL AND EXISTS (\n SELECT 1 FROM ticket_events s WHERE s.ticket_id=t.id AND s.event='CBM_SOURCE' AND s.payload->>'source_key'=$1::jsonb->>'sourceKey'))\n ORDER BY t.id LIMIT 1\n)\nSELECT jsonb_build_object('now',clock_timestamp(),'nonce',gen_random_uuid()::text,\n 'token',replace(gen_random_uuid()::text || gen_random_uuid()::text,'-',''),\n 'ticket',(SELECT to_jsonb(t) FROM target t),\n 'revision',(SELECT updated_at::text FROM target),\n 'init_failures',(SELECT count(*) FROM ticket_events WHERE ticket_id=(SELECT id FROM target) AND event='CBM_INIT_FAILURE'),\n 'state',(SELECT payload FROM ticket_events WHERE ticket_id=(SELECT id FROM target)\n          AND event='CBM_DISPATCH_STATE' ORDER BY id DESC LIMIT 1),\n 'inbox',COALESCE((SELECT jsonb_agg(to_jsonb(e) ORDER BY e.id) FROM ticket_events e\n          WHERE e.ticket_id=(SELECT id FROM target) AND e.event='CBM_RESPONSE'), '[]'::jsonb),\n 'candidates',COALESCE((SELECT jsonb_agg(to_jsonb(c) ORDER BY c.open_jobs,c.last_assigned_at ASC NULLS FIRST,c.rating DESC,c.technician_id)\n FROM (SELECT x.id AS technician_id,x.full_name,x.email,x.rating,x.last_assigned_at,\n (SELECT count(*) FROM tickets j WHERE j.technician_id=x.id AND j.status IN ('ASSIGNED','WORK_DONE','PENDING_APPROVAL','REWORK')) AS open_jobs\n FROM technicians x WHERE x.active=TRUE AND x.zone='building-A'\n AND (SELECT required_skill FROM target)=ANY(x.skills)) c),'[]'::jsonb)\n) AS context), logged AS (\n INSERT INTO ticket_events(ticket_id,event,payload)\n SELECT (context#>>'{ticket,id}')::int,'CBM_INIT_FAILURE','{\"reason\":\"Agent ended before initialization\"}'::jsonb\n FROM target WHERE context->'ticket'<>'null'::jsonb AND context->'state'='null'::jsonb RETURNING id\n) SELECT count(*) AS recorded FROM logged;",
+        "options": {
+          "queryBatching": "single",
+          "queryReplacement": "={{ [JSON.stringify($('When Executed by Another Workflow').first().json)] }}"
+        }
+      },
+      "id": "0c22f8ff-df82-48a2-9800-60e82eff1d0f",
+      "name": "Record Uninitialized Failure",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        224,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cbmLocalPg20260917",
+          "name": "CBM Postgres - Local Demo"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nWITH target AS (\n SELECT t.* FROM tickets t WHERE\n (NULLIF($1::jsonb->>'ticketId','') IS NOT NULL AND t.id=(NULLIF($1::jsonb->>'ticketId',''))::int)\n OR (NULLIF($1::jsonb->>'ticketId','') IS NULL AND EXISTS (\n SELECT 1 FROM ticket_events s WHERE s.ticket_id=t.id AND s.event='CBM_SOURCE' AND s.payload->>'source_key'=$1::jsonb->>'sourceKey'))\n ORDER BY t.id LIMIT 1\n)\nSELECT jsonb_build_object('now',clock_timestamp(),'nonce',gen_random_uuid()::text,\n 'token',replace(gen_random_uuid()::text || gen_random_uuid()::text,'-',''),\n 'ticket',(SELECT to_jsonb(t) FROM target t),\n 'revision',(SELECT updated_at::text FROM target),\n 'init_failures',(SELECT count(*) FROM ticket_events WHERE ticket_id=(SELECT id FROM target) AND event='CBM_INIT_FAILURE'),\n 'state',(SELECT payload FROM ticket_events WHERE ticket_id=(SELECT id FROM target)\n          AND event='CBM_DISPATCH_STATE' ORDER BY id DESC LIMIT 1),\n 'inbox',COALESCE((SELECT jsonb_agg(to_jsonb(e) ORDER BY e.id) FROM ticket_events e\n          WHERE e.ticket_id=(SELECT id FROM target) AND e.event='CBM_RESPONSE'), '[]'::jsonb),\n 'candidates',COALESCE((SELECT jsonb_agg(to_jsonb(c) ORDER BY c.open_jobs,c.last_assigned_at ASC NULLS FIRST,c.rating DESC,c.technician_id)\n FROM (SELECT x.id AS technician_id,x.full_name,x.email,x.rating,x.last_assigned_at,\n (SELECT count(*) FROM tickets j WHERE j.technician_id=x.id AND j.status IN ('ASSIGNED','WORK_DONE','PENDING_APPROVAL','REWORK')) AS open_jobs\n FROM technicians x WHERE x.active=TRUE AND x.zone='building-A'\n AND (SELECT required_skill FROM target)=ANY(x.skills)) c),'[]'::jsonb)\n) AS context;",
+        "options": {
+          "queryBatching": "single",
+          "queryReplacement": "={{ [JSON.stringify($('When Executed by Another Workflow').first().json)] }}"
+        }
+      },
+      "id": "bd566d55-cba1-47c6-9e6c-2eed71f4c2c8",
+      "name": "Load Ticket State",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        448,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cbmLocalPg20260917",
+          "name": "CBM Postgres - Local Demo"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const active = o => ['SENDING','LIVE','UNCERTAIN'].includes(o.status);\n\nconst terminal = t => !['LOCALIZED','DISPATCHING'].includes(t.status);\n\nfunction audit(c,type,detail={}) {c.state.audit.push({type,at:c.now.toISOString(),...detail});}\n\nfunction block(c,reason) {c.state.halted=true;c.state.error=reason;audit(c,'OPERATOR_ACTION_REQUIRED',{reason});}\n\nfunction context(request,row) {\r\n  const state=row.state?JSON.parse(JSON.stringify(row.state)):null;\r\n  const c={request,row,state,ticket:row.ticket,now:new Date(row.now),before:JSON.stringify(state),mail:null,config:state?.config||request.config,feedback:null};\r\n  if(state) {\r\n    state.audit ||= [];state.messages ||= {};state.offers ||= [];\r\n    if(terminal(row.ticket))state.status=row.ticket.status;\r\n    for(const m of Object.values(state.messages)) {\r\n      if(m.status==='SENDING'&&c.now-Date.parse(m.claimed_at)>300000&&!(request.operation==='ack'&&request.receipt?.key===m.key)) {\r\n        m.status='UNCERTAIN';const o=state.offers.find(o=>o.id===m.offer_id);if(o&&active(o))o.status='UNCERTAIN';\r\n        block(c,`Delivery receipt missing for ${m.key}. Reconcile with Gmail before resending.`);\r\n      }\r\n    }\r\n  }\r\n  return c;\r\n}\n\nfunction facts(c) {\r\n  const {state:s,ticket:t,row,now}=c;\r\n  if(!t)return {ticket_id:null,outcome:'NO_TICKET',initialized:false};\r\n  if(!s)return {ticket_id:t.id,outcome:Number(row.init_failures||0)>=3?'OPERATOR_ACTION_REQUIRED':'UNINITIALIZED',initialized:false};\r\n  const offers=s.offers,notices=Object.values(s.messages),candidates=row.candidates||[];\r\n  const available=s.shortlist.filter(id=>!offers.some(o=>o.technician_id===id)&&candidates.some(c=>Number(c.technician_id)===id));\r\n  const pending=(row.inbox||[]).filter(i=>Number(i.id)>Number(s.response_cursor));\r\n  const expired=offers.filter(o=>active(o)&&Date.parse(o.expires_at)<=now.getTime()),live=offers.filter(active);\r\n  const urgent=Number(t.severity)>=4,cap=urgent?2:1,opening=s.messages.opening?.status;\r\n  const beforeAppointment=!urgent||now.getTime()<Date.parse(s.urgent_start),dispatchOpen=!terminal(t);\r\n  // Outcome verification is separate from the agent's choice of tools.\r\n  const unfinished=pending.length>0||expired.length>0||notices.some(m=>m.status==='PENDING'&&!m.key.startsWith('offer:')&&(m.key!=='opening'||dispatchOpen))||\r\n    (dispatchOpen&&opening==='SENT'&&((live.length<cap&&available.length>0&&beforeAppointment)||(live.length===0&&(available.length===0||!beforeAppointment))));\r\n  const wakes=[...live.map(o=>Date.parse(o.expires_at)),...notices.filter(m=>m.status==='SENDING').map(m=>Date.parse(m.claimed_at)+300001)];\r\n  const nextWake=s.halted?null:unfinished?now.toISOString():wakes.length?new Date(Math.min(...wakes)).toISOString():null;\r\n  return {ticket_id:t.id,initialized:true,status:t.status,dispatch_status:s.status,\r\n    outcome:s.halted?'OPERATOR_ACTION_REQUIRED':unfinished?'ACTION_REQUIRED':s.status==='ASSIGNED'?'ASSIGNED':s.status==='ESCALATED'?'ESCALATED':'WAITING',\r\n    now:now.toISOString(),urgent,max_live_offers:cap,active_offer_count:live.length,urgent_start:s.urgent_start,original_date:s.original_date,\r\n    opening_status:opening,pending_response_count:pending.length,expired_offer_count:expired.length,next_wake:nextWake,\r\n    available_candidate_ids:available,error:s.halted?s.error:null,\r\n    offers:offers.map(o=>({id:o.id,technician_id:o.technician_id,full_name:o.full_name,date:o.date,slot:o.slot,status:o.status,reserved_at:o.reserved_at,sent_at:o.sent_at,expires_at:o.expires_at,knowledge:{status:o.technical_knowledge?.status||'UNAVAILABLE',chunk_ids:(o.technical_knowledge?.chunks||[]).map(d=>d.metadata.chunk_id)}})),notices:notices.map(m=>({key:m.key,status:m.status,message_id:m.message_id||null})),\r\n    candidates:s.shortlist.map(id=>{const v=candidates.find(x=>Number(x.technician_id)===id);return v?{technician_id:id,full_name:v.full_name,eligible:true,open_jobs:v.open_jobs,last_assigned_at:v.last_assigned_at,rating:v.rating}:{technician_id:id,eligible:false};})};\r\n}\n\nfunction finish(c) {\r\n  const result=facts(c);if(c.feedback)result.operation_result=c.feedback;\r\n  if(c.state){c.state.next_wake=c.request.operation==='failure'&&!c.state.halted?new Date(c.now.getTime()+60000).toISOString():result.next_wake;c.state.audit=c.state.audit.slice(-60);}\r\n  return {write:c.request.operation!=='read'&&!!c.state&&JSON.stringify(c.state)!==c.before,state:c.state,mail:c.mail,result,feedback:c.feedback};\r\n}\n\nfunction reject(c,reason) {c.feedback={performed:false,reason};return finish(c);}\n\nfunction failure(request,row) {\r\n  const c=context(request,row);if(!c.state)return finish(c);c.state.failures++;c.state.error='Agent/tool execution incomplete. Inspect the n8n execution.';if(c.state.failures>=3)block(c,c.state.error);return finish(c);\r\n}\nconst runOperation = failure;\nconst input=$('When Executed by Another Workflow').first().json;\nif(!input.ticketId&&!input.sourceKey)throw new Error('A bound ticket or source identifier is required');\nconst request={...input,operation:\"failure\",config:{\"fmEmail\":\"gruppo1isteagiovani@gmail.com\",\"callbackBase\":\"https://bonanza-progress-hangover.ngrok-free.dev/webhook\",\"model\":\"claude-sonnet-4-6\",\"thinkingMode\":\"adaptive\",\"effort\":\"high\",\"postgresCredentialId\":\"cbmLocalPg20260917\",\"postgresCredentialName\":\"CBM Postgres - Local Demo\",\"gmailCredentialId\":\"R5EQDxDzCMYdMH9U\",\"gmailCredentialName\":\"Gmail account 3\",\"anthropicCredentialId\":\"rj0J6fDoCBVNb7d1\",\"anthropicCredentialName\":\"Anthropic account\",\"workflowIds\":{\"initialize\":\"F6Jy5Oj83kbFMQCZ\",\"offer_next\":\"xgjzRT6ZUx2Q9J1q\",\"send_notices\":\"LkgsXHySuUApNjKw\",\"process_events\":\"feYC6MDEkiKT1vFJ\",\"escalate\":\"Jtp8qKAXoahQPibf\",\"ack\":\"r9dppIDsv4K3EBzo\",\"failure\":\"aFLHB2kJNkSJ7Rig\"}}};\nconst row=$json.context;\nconst d=runOperation(request,row);\nreturn [{json:{...d,ticketId:row.ticket?.id,revision:row.revision,assigning:row.ticket?.status!=='ASSIGNED'&&d.state?.status==='ASSIGNED'}}];"
+      },
+      "id": "ce585487-e7b3-4e59-b031-4471824686d6",
+      "name": "Record Failure",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "66ae1ba0682929a7b1238e775ba8d6c3",
+              "leftValue": "={{ $json.write === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "4b4e80a4-4420-4338-b9e1-046f27c37dbb",
+      "name": "State Changed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nWITH changed AS (\n UPDATE tickets SET status=$3::jsonb->>'status',\n technician_id=CASE WHEN $3::jsonb->>'status'='ASSIGNED' THEN ($3::jsonb->>'assignee')::int ELSE technician_id END,\n scheduled_date=CASE WHEN $3::jsonb->>'status'='ASSIGNED' THEN ($3::jsonb->>'scheduled_date')::date ELSE scheduled_date END,\n scheduled_slot=CASE WHEN $3::jsonb->>'status'='ASSIGNED' THEN $3::jsonb->>'scheduled_slot' ELSE scheduled_slot END,\n updated_at=GREATEST(clock_timestamp(),updated_at+interval '1 microsecond')\n WHERE id=$1::int AND updated_at=$2::timestamptz RETURNING id,technician_id\n), log AS (\n INSERT INTO ticket_events(ticket_id,event,payload) SELECT id,'CBM_DISPATCH_STATE',$3::jsonb FROM changed RETURNING id\n), stats AS (\n UPDATE technicians SET last_assigned_at=clock_timestamp()\n WHERE id IN (SELECT technician_id FROM changed) AND $4::boolean RETURNING id\n)\nSELECT EXISTS(SELECT 1 FROM changed) AS applied;",
+        "options": {
+          "queryBatching": "single",
+          "queryReplacement": "={{ [$json.ticketId,$json.revision,JSON.stringify($json.state),$json.assigning] }}"
+        }
+      },
+      "id": "fa789ecd-ddb0-4f21-8bb4-2ee82e43571b",
+      "name": "Commit Change",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1104,
+        -96
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cbmLocalPg20260917",
+          "name": "CBM Postgres - Local Demo"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "4e14883f09540d41bd7d88996706a8b1",
+              "leftValue": "={{ $json.applied === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "e0a0f07a-b7f3-445d-9848-acfb80bbf872",
+      "name": "Commit Succeeded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        -32
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "if($runIndex>=4)throw new Error('Concurrent update retry limit reached. No uncommitted email was sent.');\nreturn [{json:$('When Executed by Another Workflow').first().json}];"
+      },
+      "id": "8bd8e596-5763-4fdf-94f1-dc6be375853d",
+      "name": "Retry Conflict",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1184,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT context || jsonb_build_object('operation_result',$2::jsonb) AS context FROM (SELECT public.cbm_dispatch_context($1::jsonb) AS context) result;",
+        "options": {
+          "queryBatching": "single",
+          "queryReplacement": "={{ [JSON.stringify($('When Executed by Another Workflow').first().json),JSON.stringify($('Record Failure').item.json.feedback || null)] }}"
+        }
+      },
+      "id": "9fdaf17b-3650-4a97-ad5b-f69e75c15a0a",
+      "name": "Return Current Context",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1664,
+        176
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cbmLocalPg20260917",
+          "name": "CBM Postgres - Local Demo"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "# Dispatch - Record Incomplete Execution\n\n## Purpose: Keep track of dispatch executions that failed to finish.\n\nSpecific nodes:\n- Record Uninitialized Failure — runs before Load Ticket State, covering failures before dispatch initialization.\n- Record Failure — updates failure/recovery information.\n\n## Result: A persisted failure, with recovery scheduled or processing halted when intervention is needed.",
+        "height": 752,
+        "width": 1920,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -64,
+        -336
+      ],
+      "typeVersion": 1,
+      "id": "f780b04c-8460-4078-9055-6587b7dcb7fb",
+      "name": "Sticky Note"
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Record Uninitialized Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Uninitialized Failure": {
+      "main": [
+        [
+          {
+            "node": "Load Ticket State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Ticket State": {
+      "main": [
+        [
+          {
+            "node": "Record Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Failure": {
+      "main": [
+        [
+          {
+            "node": "State Changed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "State Changed?": {
+      "main": [
+        [
+          {
+            "node": "Commit Change",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Current Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commit Change": {
+      "main": [
+        [
+          {
+            "node": "Commit Succeeded?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commit Succeeded?": {
+      "main": [
+        [
+          {
+            "node": "Return Current Context",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Retry Conflict",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retry Conflict": {
+      "main": [
+        [
+          {
+            "node": "Load Ticket State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": null,
+  "nodeGroups": [],
+  "pinData": {},
+  "versionId": "64d8737b-da87-4be7-9cfd-b3a85b032927",
+  "activeVersionId": null,
+  "versionCounter": 19,
+  "triggerCount": 0,
+  "sourceWorkflowId": null,
+  "tags": [
+    {
+      "updatedAt": "2026-09-15T21:16:40.855Z",
+      "createdAt": "2026-09-15T21:16:40.855Z",
+      "id": "JquR4eICDUrZaC8J",
+      "name": "failure.json"
+    },
+    {
+      "updatedAt": "2026-09-15T21:10:56.246Z",
+      "createdAt": "2026-09-15T21:10:56.246Z",
+      "id": "v2sLLqn4il2Xqsue",
+      "name": "pending_configuration"
+    }
+  ],
+  "shared": [
+    {
+      "updatedAt": "2026-09-15T21:16:20.829Z",
+      "createdAt": "2026-09-15T21:16:20.829Z",
+      "role": "workflow:owner",
+      "workflowId": "aFLHB2kJNkSJ7Rig",
+      "projectId": "MbDNXY6kRG3NS2YO",
+      "project": {
+        "updatedAt": "2026-06-08T13:02:38.493Z",
+        "createdAt": "2026-06-08T12:54:16.212Z",
+        "id": "MbDNXY6kRG3NS2YO",
+        "name": "Giuseppe Desiderio <giuseppe.desiderio@polito.it>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "customTelemetryTags": [],
+        "creatorId": "9e453420-3eba-485f-bf70-3fb1da70cbd5"
+      }
+    }
+  ],
+  "versionMetadata": {
+    "name": null,
+    "description": null
+  }
+}

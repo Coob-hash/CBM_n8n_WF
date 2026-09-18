@@ -4,7 +4,7 @@ const fs=require('node:fs');
 const path=require('node:path');
 const crypto=require('node:crypto');
 const root=path.resolve(__dirname,'../..');
-const runtime=process.env.CBM_PGLITE_PATH || path.join(root,'phase_b/.test-runtime/pglite/dist/index.cjs');
+const runtime=process.env.CBM_PGLITE_PATH || path.join(root,'cbm/app/phase_b/.test-runtime/pglite/dist/index.cjs');
 if(!fs.existsSync(runtime))throw new Error('Run node phase_b/setup-test-runtime.js or set CBM_PGLITE_PATH to a PGlite 0.5.8 index.cjs.');
 const {PGlite}=require(runtime);
 const migrations=fs.readdirSync(path.join(root,'database/migrations')).filter(n=>n.endsWith('.sql')).sort();
@@ -65,7 +65,7 @@ async function main(){
  db=new PGlite();
  for(const file of migrations)await db.transaction(tx=>tx.exec(fs.readFileSync(path.join(root,'database/migrations',file),'utf8')));
  const tables=(await db.query("SELECT tablename FROM pg_tables WHERE schemaname='cbm' ORDER BY tablename")).rows.map(r=>r.tablename);
- const proposed=[...fs.readFileSync(path.join(root,'docs/database_schema_proposal.md'),'utf8').matchAll(/^\| `([a-z_]+)` \|/gm)].map(m=>m[1]).sort();
+ const proposed=[...fs.readFileSync(path.join(root,'cbm/app/docs/database_schema_proposal.md'),'utf8').matchAll(/^\| `([a-z_]+)` \|/gm)].map(m=>m[1]).sort();
  assert.deepEqual(tables,proposed);console.log('PASS All 27 approved tables exist');results.push('All 27 approved tables exist');
  base=await db.transaction(async tx=>{
   const system=(await one(tx,"SELECT id FROM cbm.actors WHERE external_identity='cbm.database'")).id;
@@ -309,7 +309,7 @@ async function main(){
  });
  await check('New schema coexists with legacy public tables without changing them',async()=>{
   const isolated=new PGlite();try{
-   await isolated.exec(fs.readFileSync(path.join(root,'schema.sql'),'utf8'));
+   await isolated.exec(fs.readFileSync(path.join(root,'database/schema.sql'),'utf8'));
    const old=await one(isolated,'SELECT count(*)::int AS n FROM public.technicians');
    for(const file of migrations)await isolated.transaction(tx=>tx.exec(fs.readFileSync(path.join(root,'database/migrations',file),'utf8')));
    assert.equal((await one(isolated,'SELECT count(*)::int AS n FROM public.technicians')).n,old.n);

@@ -1,0 +1,97 @@
+# Isolated validation only. Never mounts the user's n8n_test directory or Gmail credentials.
+name: cbm-intake-validation
+services:
+  mock-provider:
+    image: cbm-python:2026.09.15-intake-approval
+    command: ["python", "-m", "uvicorn", "mock_provider:app", "--host", "0.0.0.0", "--port", "8010"]
+    environment:
+      PYTHONPATH: /fixtures
+    volumes:
+      - ../intake:/fixtures:ro
+    ports:
+      - "127.0.0.1:58010:8010"
+  n8n:
+    image: n8n-cbm:2.29.9
+    environment:
+      N8N_ENCRYPTION_KEY: disposable-validation-key
+      N8N_RUNNERS_MODE: external
+      N8N_RUNNERS_BROKER_LISTEN_ADDRESS: 0.0.0.0
+      N8N_RUNNERS_AUTH_TOKEN: disposable-validation-runner-token
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
+      N8N_TEMPLATES_ENABLED: "false"
+      N8N_SECURE_COOKIE: "false"
+      IFC_SERVICE_URL: http://ifc-service:8000
+      N8N_DEFAULT_BINARY_DATA_MODE: filesystem
+      N8N_RESTRICT_FILE_ACCESS_TO: /fixtures
+      GENERIC_TIMEZONE: Europe/Rome
+    ports:
+      - "127.0.0.1:5689:5678"
+    volumes:
+      - n8n_validation:/home/node/.n8n
+      - ./:/fixtures:ro
+  task-runners:
+    image: cbm-runners:2.29.9
+    environment:
+      N8N_RUNNERS_TASK_BROKER_URI: http://n8n:5679
+      N8N_RUNNERS_AUTH_TOKEN: disposable-validation-runner-token
+      GENERIC_TIMEZONE: Europe/Rome
+    depends_on:
+      - n8n
+  ifc-init:
+    image: cbm-python:2026.09.15-intake-approval
+    command: ["python", "/app/initialize_model.py"]
+    environment:
+      CBM_CASE_STUDY_DIR: /app/case-study
+    volumes:
+      - ../case-study:/app/case-study:ro
+      - models_validation:/app/models
+  ifc-service:
+    image: cbm-python:2026.09.15-intake-approval
+    environment:
+      IFC_MODEL_DIR: /app/models
+      CBM_CASE_STUDY_DIR: /app/case-study
+    volumes:
+      - ../case-study:/app/case-study:ro
+      - models_validation:/app/models
+    depends_on:
+      ifc-init:
+        condition: service_completed_successfully
+  knowledge-service:
+    image: cbm-python:2026.09.15-intake-approval
+    command: ["python", "-m", "uvicorn", "knowledge.service:app", "--host", "0.0.0.0", "--port", "8001"]
+    environment:
+      IFC_MODEL_DIR: /app/models
+      CBM_CASE_STUDY_DIR: /app/case-study
+      CBM_KNOWLEDGE_CATALOG: /catalog/catalog.local.json
+      CBM_KNOWLEDGE_KEY: disposable-knowledge-test-key
+    volumes:
+      - ../case-study:/app/case-study:ro
+      - models_validation:/app/models:ro
+      - ./catalog:/catalog:ro
+    depends_on:
+      ifc-init:
+        condition: service_completed_successfully
+  cbm-postgres:
+    ports:
+      - "127.0.0.1:55439:5432"
+    image: postgres:16@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
+    environment:
+      POSTGRES_DB: cbm_demo
+      POSTGRES_USER: cbm_app
+      POSTGRES_PASSWORD: disposable-postgres-test-password
+    volumes:
+      - postgres_validation:/var/lib/postgresql/data
+      - ../../database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ../../database/schema_dispatch_functions.sql:/docker-entrypoint-initdb.d/02-dispatch.sql:ro
+      - ../../database/schema_wf2_completion.sql:/docker-entrypoint-initdb.d/03-completion.sql:ro
+      - ../../database/schema_wf3_dashboard.sql:/docker-entrypoint-initdb.d/04-dashboard.sql:ro
+      - ../../database/schema_release_review.sql:/docker-entrypoint-initdb.d/05-review.sql:ro
+      - ../../database/disable-fixture-technicians.sql:/docker-entrypoint-initdb.d/06-demo-recipients.sql:ro
+      - ../../database/intake/schema_intake.sql:/docker-entrypoint-initdb.d/07-intake.sql:ro
+      - ../../database/intake/schema_configuration_pause.sql:/docker-entrypoint-initdb.d/12-configuration-pause.sql:ro
+volumes:
+  n8n_validation:
+  models_validation:
+  postgres_validation:
