@@ -1,0 +1,480 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CBM — Run the office demo</title><style>
+ :root{color-scheme:light;--ink:#173044;--muted:#577080;--green:#09675d;--line:#dae4e8}*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:24px}body{margin:0;background:#f0f4f6;color:var(--ink);font:16px/1.65 system-ui,-apple-system,Segoe UI,sans-serif}.mast{padding:24px 5vw;background:#143746;color:white}.mast strong{letter-spacing:.12em;font-size:13px}.mast span{display:block;color:#c6dde1;font-size:14px}.layout{max-width:1450px;margin:auto;display:grid;grid-template-columns:280px minmax(0,1fr);gap:32px;padding:34px 32px}nav{align-self:start;position:sticky;top:24px;max-height:calc(100vh - 48px);overflow:auto;padding-right:8px}nav p{font-size:12px;text-transform:uppercase;font-weight:700;letter-spacing:.1em;color:var(--muted)}nav a{display:block;padding:9px 12px;margin:3px 0;border-radius:8px;font-size:14px;line-height:1.35;text-decoration:none;color:var(--ink)}nav a:hover{background:#dcecea;color:var(--green)}main{background:white;padding:42px 48px;border:1px solid var(--line);border-radius:15px;min-width:0}h1{font-size:39px;letter-spacing:-.035em;line-height:1.15;margin-top:0;margin-bottom:24px}h2{font-size:26px;line-height:1.3;letter-spacing:-.015em;border-top:1px solid var(--line);padding-top:30px;margin-top:42px}h3{font-size:19px;margin-top:27px}p,ul,ol{margin:15px 0}li{margin:7px 0}a{color:var(--green);text-underline-offset:3px;overflow-wrap:anywhere}code{font: .88em/1.6 ui-monospace,Consolas,monospace;background:#eef4f5;padding:2px 5px;border-radius:4px;overflow-wrap:anywhere}pre{background:#112d3b;color:#edf6f7;padding:21px;border-radius:10px;overflow:auto;font-size:13px;line-height:1.6}pre code{color:inherit;background:none;padding:0;white-space:pre;overflow-wrap:normal}.table{overflow:auto;margin:20px 0;border:1px solid var(--line);border-radius:9px}table{border-collapse:collapse;width:100%;font-size:14px;line-height:1.55}th{background:#eaf3f2;text-align:left;color:#125c55}td,th{padding:12px 14px;vertical-align:top;border-bottom:1px solid var(--line);min-width:160px}tbody tr:last-child td{border:0}tbody tr:nth-child(even){background:#f8fafb}strong{font-weight:650}main>p:first-of-type{color:var(--muted)}footer{color:var(--muted);font-size:13px;margin-top:32px}.jump{display:inline-block;background:#e4f2ed;color:#145e50;border-radius:50px;padding:7px 14px;margin-top:12px;text-decoration:none;font-weight:600;font-size:13px}@media(max-width:960px){.layout{grid-template-columns:1fr;padding:20px;gap:16px}nav{position:static;max-height:none;display:none}main{padding:28px 24px}h1{font-size:32px}h2{font-size:23px}}@media print{body{background:white;font-size:10pt}.mast,nav{display:none}.layout{display:block;padding:0}main{border:0;padding:0}h2,h3{break-after:avoid}pre,.table{break-inside:avoid}a{color:inherit}pre{white-space:pre-wrap}pre code{white-space:pre-wrap}.table{overflow:visible}}
+ </style></head><body><header class="mast"><strong>CBM / OFFICE DEMONSTRATION</strong><span>Operator guide · verified setup and remaining prerequisites · 17 September 2026</span></header><div class="layout"><nav aria-label="Guide sections"><p>Follow the demo</p><a href="#section-1">1. What is ready, and what still needs setup</a><a href="#section-2">2. The system at a glance</a><a href="#section-3">3. Start the existing installation</a><a href="#section-4">4. Finish the Google connection</a><a href="#section-5">5. Configure MultiSet together</a><a href="#section-6">6. Prepare n8n for the demonstration</a><a href="#section-7">7. Run WF1: photo to assignment</a><a href="#section-8">8. Submit the technician report through the new page</a><a href="#section-9">9. Run WF2: report to verified closure</a><a href="#section-10">10. Use WF3 at the end</a><a href="#section-11">11. Inspect the database and services</a><a href="#section-12">12. Troubleshooting at the relevant checkpoint</a><a href="#section-13">13. Finish a demonstration and restart later</a><a href="#section-14">14. What was implemented and tested in this update</a><a href="#section-15">WF1 direct intake and vision correction — 17 September</a><a href="#section-16">MultiSet DNS and provider failures</a><a class="jump" href="../../cbm/templates/technician-report/technician-report.html">Open editable offline report ↗</a></nav><main><h1>Run the CBM office demo</h1>
+<p><strong>Current runbook — 17 September 2026.</strong> This guide describes the installed single-ticket workflows and the new bilingual technician report page. Use it for the next demonstration; the older deployment tutorial is historical installation material.</p>
+<h2 id="section-1">1. What is ready, and what still needs setup</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Verified state</th>
+<th>Next action</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Docker, n8n, local PostgreSQL, Python IFC/report service</td>
+<td>Running; business tables and functions installed</td>
+<td>Start/check them using section 3</td>
+</tr>
+<tr>
+<td>Office IFC</td>
+<td><code>office_v1.ifc</code>, 13 maintainable assets</td>
+<td>Use the matching office photos and map</td>
+</tr>
+<tr>
+<td>Google Drive account 2</td>
+<td>OAuth refresh/profile check now succeeds</td>
+<td>Confirm access to both folders below; no live upload was made during development</td>
+</tr>
+<tr>
+<td>Gmail account 3</td>
+<td>Connected; all application Gmail nodes are bound to this credential</td>
+<td>Use it for the controlled email steps below</td>
+</tr>
+<tr>
+<td>MultiSet map</td>
+<td><code>MAP_J964JX6MGEGO</code> configured; you can see it in the portal</td>
+<td>Credentials section is empty: create/bind a Query credential and verify an API query</td>
+</tr>
+<tr>
+<td>MultiSet-to-IFC alignment</td>
+<td>Not completed: <code>approved: false</code>, <code>matrix: null</code></td>
+<td>Measure and validate the transform; section 5</td>
+</tr>
+<tr>
+<td>OpenRouter, Anthropic, OpenAI, Supabase</td>
+<td>Read-only authentication checks succeeded</td>
+<td>Existing bindings retained; this was not an end-to-end model run</td>
+</tr>
+<tr>
+<td>Technician</td>
+<td>One active demo identity: <code>giuseppe.desiderio123@gmail.com</code></td>
+<td>Ready for dispatch once the earlier steps work</td>
+</tr>
+<tr>
+<td>Technician report page</td>
+<td>Implemented, imported into n8n, inactive</td>
+<td>Publish with the other demo entry workflows after setup</td>
+</tr>
+<tr>
+<td>WF1 / WF2 / WF3</td>
+<td>Saved, inactive at verification</td>
+<td>Follow section 6</td>
+</tr>
+<tr>
+<td>WF3 public chat</td>
+<td>Basic Auth credential missing</td>
+<td>Configure before publishing WF3</td>
+</tr>
+<tr>
+<td>Optional technical-sheet OCR import</td>
+<td>Mistral credential returned 401</td>
+<td>Repair only if demonstrating that separate import route</td>
+</tr>
+</tbody></table></div>
+<p><strong>A full successful photo-to-closure demonstration is not ready yet. MultiSet API access and map alignment are the remaining core setup tasks.</strong> Repeated uploads while those are missing would consume the report&#39;s retry allowance without resolving the cause.</p>
+<p>The demo database currently has no maintenance tickets or technician submissions. Development tests used synthetic fixtures outside the live business tables; no real report was uploaded and no email was sent.</p>
+<h2 id="section-2">2. The system at a glance</h2>
+<pre><code class="language-text">Original photo → incoming Drive folder → WF1
+  → Python image preparation → MultiSet localization → Python IFC matching
+  → vision observations + asset/issue validation
+  → ticket → FM authorization → dispatch → technician acceptance
+
+Assignment email → technician web form + optional photo
+  → one PDF → completed Drive folder → WF2
+  → Python text/photo extraction → assessment → FM completion approval
+  → verified IFC version → ticket closure → recorded notifications
+
+WF3 → FM questions and weekly summary of the stored results
+</code></pre>
+<h3>Local services and external services</h3>
+<p>This is <strong>one Docker Compose project with several containers</strong>. Services reach one another by Compose service name; <code>localhost</code> inside a container refers to that container.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Service</th>
+<th>Address used by n8n</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>n8n</td>
+<td>Public HTTPS address below; local editor <code>http://localhost:5678</code></td>
+<td>Triggers, web pages, approvals, agents, helper workflows</td>
+</tr>
+<tr>
+<td>CBM PostgreSQL</td>
+<td><code>cbm-postgres:5432</code>, database <code>cbm_demo</code></td>
+<td>Tickets, reports, offers, claims, events and receipts</td>
+</tr>
+<tr>
+<td>Python IFC/report API</td>
+<td><code>http://ifc-service:8000</code></td>
+<td>Image metadata, IFC candidates, PDF extraction, report template, IFC maintenance updates</td>
+</tr>
+<tr>
+<td>Knowledge API</td>
+<td><code>http://knowledge-service:8001</code></td>
+<td>Approved asset/document snapshot</td>
+</tr>
+<tr>
+<td>Task runners</td>
+<td>Internal n8n runner connection</td>
+<td>Executes Code nodes</td>
+</tr>
+<tr>
+<td>ngrok</td>
+<td>Forwards the public HTTPS domain to <code>n8n:5678</code></td>
+<td>Lets email links reach this computer</td>
+</tr>
+<tr>
+<td>MultiSet cloud</td>
+<td><code>https://api.multiset.ai</code></td>
+<td>Localizes the photograph in the existing map</td>
+</tr>
+<tr>
+<td>Google Drive / Gmail</td>
+<td>Google APIs</td>
+<td>Stores files / sends notifications and approval messages</td>
+</tr>
+<tr>
+<td>Model providers / Supabase</td>
+<td>External APIs</td>
+<td>AI inference, embeddings and approved knowledge retrieval</td>
+</tr>
+</tbody></table></div>
+<p>The <code>ifc-init</code> container performs initialization and normally exits successfully. It is not a web service that must stay running. n8n&#39;s own workflow/credential database is separate from the CBM ticket database.</p>
+<h3>Addresses and folders</h3>
+<ul>
+<li><a href="https://bonanza-progress-hangover.ngrok-free.dev">Open n8n</a>.</li>
+<li><a href="https://drive.google.com/drive/folders/199SEqJvMdyufnea4zrwabimyztWTDYJ7">Incoming photographs</a>.</li>
+<li><a href="https://drive.google.com/drive/folders/1M0uJMr10KQBJPDp6aua1cgkOwXqWbmeC">Completed technician reports</a>.</li>
+<li>FM: <code>gruppo1isteagiovani@gmail.com</code>.</li>
+<li>Reporter/technician for the demo: <code>giuseppe.desiderio123@gmail.com</code>.</li>
+<li>MultiSet map: <code>MAP_J964JX6MGEGO</code>.</li>
+</ul>
+<p>When a node asks for a Drive folder ID, enter only the identifier after <code>/folders/</code>. The two folders serve different stages.</p>
+<h2 id="section-3">3. Start the existing installation</h2>
+<ol>
+<li>Start Docker Desktop and wait for its engine to be ready.</li>
+<li>Open PowerShell <strong>7.3 or later</strong>. If your current terminal is Windows PowerShell 5.1, this opens the bundled newer shell:</li>
+</ol>
+<pre><code class="language-powershell">&amp; &#39;C:\Users\USER\.cache\codex-runtimes\codex-primary-runtime\dependencies\native\powershell\pwsh.exe&#39; -NoProfile
+</code></pre>
+<ol start="3">
+<li>In that shell, run:</li>
+</ol>
+<pre><code class="language-powershell">Set-Location -LiteralPath &#39;C:\Users\USER\Desktop\n8n_deploy&#39;
+.\scripts\deployment\Cbm-Compose.ps1 up -d
+.\scripts\deployment\Cbm-Compose.ps1 ps -a
+.\scripts\deployment\Test-Cbm.ps1
+</code></pre>
+<p>The wrapper supplies both environment files and the correct Compose project. Check the output for n8n readiness, Python health, the 13 office assets and PostgreSQL tables. <code>registration verified: False</code> remains a real missing prerequisite even if the infrastructure checks pass.</p>
+<p>Ordinary startup needs no workflow rebuild or import. <code>scripts/workflows/Prepare-CbmWorkflows.ps1</code> produces files; it does not update the workflows already saved in n8n. Avoid running old import packages over your edited main workflows.</p>
+<p>Keep this computer, Docker and ngrok running while a person opens an approval or report link. If the ngrok domain changes, generated email/form URLs and OAuth redirect configuration must be updated together.</p>
+<h2 id="section-4">4. Finish the Google connection</h2>
+<p>Drive and Gmail use separate saved credentials. Drive succeeding does not prove Gmail works.</p>
+<h3>Google Drive account 2</h3>
+<p>Open this saved credential and confirm the connected Google account can open both folder links. WF1 reads the incoming folder; WF2 reads the completed folder; the portal must also be able to create a file in the completed folder. The recent check proved authentication, not a live write.</p>
+<h3>Gmail account 3</h3>
+<p>This saved credential is connected and all Gmail nodes in the 15-workflow application are bound to it. If Google access is revoked later, reconnect <strong>Gmail account 3</strong> in n8n; do not replace the credential reference in individual nodes. See <a href="https://docs.n8n.io/integrations/builtin/credentials/google/oauth-single-service">n8n&#39;s Google OAuth setup</a>.</p>
+<p>The Gmail sender can differ from the FM recipient. During the demo, inspect the sender&#39;s Sent folder as well as the FM and technician inboxes. A normal reply saying “yes” is not parsed by this implementation: use the action links/buttons supplied by the workflow.</p>
+<h2 id="section-5">5. Configure MultiSet together</h2>
+<h3>A. API credentials</h3>
+<p>Your email identifies the account, and the map code identifies the map. The workflow additionally needs a <strong>Client ID and Client Secret</strong>.</p>
+<ol>
+<li>Sign in to the <a href="https://developer.multiset.ai">MultiSet Developer Portal</a> with your account.</li>
+<li>Check that <code>MAP_J964JX6MGEGO</code> belongs to, or is accessible by, that account and is ready for localization.</li>
+<li>Open <strong>Credentials → Create New</strong>, give the credential a demo name and enable <strong>Query</strong> scope. Save the Client ID and Secret directly into n8n; the secret is shown at creation. See <a href="https://docs.multiset.ai/multiset/fundamentals/credentials">MultiSet credentials</a>.</li>
+<li>In WF1, open <strong>MultiSet - Get Token</strong>, create/select an <strong>HTTP Basic Auth</strong> credential: Username = Client ID; Password = Client Secret. Use a descriptive saved name such as <code>CBM MultiSet - Office Demo</code>.</li>
+<li>The node already uses <code>POST https://api.multiset.ai/v1/m2m/token</code>. Its result supplies the bearer token used by <strong>MultiSet - Localize Snapshot</strong>. Do not put the website password in this credential. See <a href="https://docs.multiset.ai/multiset/fundamentals/rest-api-docs/authentication">MultiSet authentication</a>.</li>
+<li>Verify token acquisition, then a single controlled query against the configured map. Token success alone does not prove the photograph localizes correctly.</li>
+</ol>
+<p>Once the credential is saved, also record its n8n ID/name in <code>cbm/app/runtime-bindings.json</code> under <code>credentials.multisetBasic</code> in the source and deployment copies, so later preparation preserves the binding. The binding file stores the reference, not the secret.</p>
+<h3>B. Align the map with the IFC model</h3>
+<p>MultiSet returns a camera pose in its map coordinates. The IFC has its own origin and orientation. The Python service needs a measured transform to compare them correctly.</p>
+<p>A proposed registration was measured on 17 September: MultiSet <code>(x,y,z)</code> maps to IFC <code>(x,-z,y)</code>. Seven scan stations match within 0.00000063 m, and independent checks across 21 structural elements have a median surface difference of 0.0277 m. See <code>validation-registration-fix/registration-validation.json</code>. The user approved this measured registration and it was enabled on 17 September. The live service reports <code>registration_verified: true</code>; replaying execution 280 gives four IFC candidates. Future registration/configuration faults pause without consuming photo attempts.</p>
+<p>The installed registration file now contains the measured matrix and approval evidence. The service reads it on each request, so no container rebuild was required. To inspect it:</p>
+<pre><code class="language-powershell">.\scripts\deployment\Cbm-Compose.ps1 exec -T ifc-service python -c &#39;import urllib.request; print(urllib.request.urlopen(&quot;http://127.0.0.1:8000/case-study/status&quot;).read().decode())&#39;
+</code></pre>
+<p>The response must identify this map and matching IFC source, with <code>registration_verified: true</code>. That flag confirms the configured transform is accepted; the separate measured checks establish whether it is accurate. This demo alignment was measured, approved and verified on 17 September; reassess it if the map or model coordinate frame changes.</p>
+<h2 id="section-6">6. Prepare n8n for the demonstration</h2>
+<p>The installed project now has <strong>15 workflows: three main workflows, eleven existing supporting workflows and the new technician portal</strong>. No additional imports are needed for this update.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Workflow</th>
+<th>How to use it</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><a href="https://bonanza-progress-hangover.ngrok-free.dev/workflow/YZb99Du8CBtsSy7f">WF1 — Ticket Intake &amp; Dispatch</a></td>
+<td>Publish after Gmail, MultiSet and alignment are ready</td>
+</tr>
+<tr>
+<td><a href="https://bonanza-progress-hangover.ngrok-free.dev/workflow/5quLJucpa0K4jWZS">WF2 — Completion, Approval &amp; IFC Update</a></td>
+<td>Publish to watch newly uploaded completed reports</td>
+</tr>
+<tr>
+<td><a href="https://bonanza-progress-hangover.ngrok-free.dev/workflow/cbmTechnicianPortal20260917">Technician Report Portal</a></td>
+<td>Publish to register its production GET/POST webhooks</td>
+</tr>
+<tr>
+<td><a href="https://bonanza-progress-hangover.ngrok-free.dev/workflow/658IWGwRtDMsPri7">WF3 — Facility Manager Dashboard</a></td>
+<td>Configure the chat Basic Auth credential before publishing; publication also enables the weekly schedule</td>
+</tr>
+<tr>
+<td>Called helper workflows</td>
+<td>Keep the imported IDs and save changes; parents invoke them through Execute Workflow/tool calls</td>
+</tr>
+<tr>
+<td>Knowledge sync/error workflows</td>
+<td>Separate supporting pipeline; enable its scheduled route when demonstrating knowledge synchronization</td>
+</tr>
+</tbody></table></div>
+<p>Save the current versions before publishing. Refreshing an editor displays saved changes; it does not publish a workflow. The portal and updated assignment/rework helpers are already installed. WF1, WF2 and WF3 were not overwritten by the portal installation.</p>
+<p>Production email links use <code>/webhook/…</code>. <code>/webhook-test/…</code> is a temporary test listener and is unsuitable for the full asynchronous demo. A report URL without its valid ticket/token is deliberately unavailable.</p>
+<h3>Technician identity</h3>
+<p>The controlled email is now active with demo skills and zone <code>building-A</code>. One identity is enough for the complete acceptance path. PostgreSQL makes technician email unique, so using the same email twice means the same person. The setup command now handles this correctly:</p>
+<pre><code class="language-powershell">.\scripts\demo\Set-CbmDemoTechnicians.ps1 -Email1 &#39;giuseppe.desiderio123@gmail.com&#39;
+</code></pre>
+<p>There is no need to rerun it now. A two-person competition scenario would need two distinct controlled addresses/aliases. The old fictitious technicians remain inactive.</p>
+<h2 id="section-7">7. Run WF1: photo to assignment</h2>
+<h3>Step 1 — Prepare one original photograph</h3>
+<p>Use a photograph of the mapped office that corresponds to the IFC. The case-study script preserves the original JPEG/EXIF and gives it a report UUID:</p>
+<pre><code class="language-powershell">.\scripts\demo\Prepare-CaseStudyPhotos.ps1 -ReporterEmail &#39;giuseppe.desiderio123@gmail.com&#39; -Photo &#39;IMG_7911.JPG&#39;
+</code></pre>
+<p>Open the printed subfolder under <code>cbm\case-study\upload-ready</code>. Upload <strong>only that one generated photo</strong> into the incoming Drive folder after WF1 is published. Its filename has this structure:</p>
+<pre><code class="language-text">report_&lt;reporter-email&gt;_&lt;report-UUID&gt;_&lt;photo&gt;.jpg
+</code></pre>
+<p>The angle-bracket names above explain the structure; the script writes actual values. Avoid screenshots, messaging-app recompression and panoramas for this calibrated case-study route. The current camera data is an audited EXIF estimate, not factory calibration; live localization remains a validation step.</p>
+<h3>Step 2 — Inspect the intake execution</h3>
+<p>The Drive trigger polls every minute. In WF1&#39;s <strong>Executions</strong>, follow the newly received file:</p>
+<ol>
+<li><strong>Drive Trigger - New Snapshot</strong> passes uploaded file items directly to <strong>Capture Input</strong> in the same execution. Phase A uses each item and its linked metadata, so a poll containing several photos keeps their files, reporters and reports separate. There is no self-call or waiting parent execution.</li>
+<li><strong>Capture Input → Check IFC Registration → Claim Capture Attempt → Capture Accepted?</strong> validates the filename and uses PostgreSQL to claim the report attempt. The Drive file ID prevents duplicate processing. A configuration-paused file can resume once registration is repaired; concurrent executions cannot claim the same file twice. After the diagnosed execution-283 framing-rule correction, that retained file was also made resumable without consuming an attempt.</li>
+<li><strong>Download Snapshot → Prepare Image &amp; Metadata → Capture Normalized?</strong> gets the image and prepares its metadata through Python.</li>
+<li><strong>MultiSet - Get Token → MultiSet - Localize Snapshot → Confidence Gate</strong> obtains and checks the camera pose.</li>
+<li><strong>Find IFC Element → IFC Candidates Available?</strong> uses Python and the registered pose to find plausible IFC assets.</li>
+<li>The observation chain adds image context. <strong>Vision Clear?</strong> rejects unclear evidence. <strong>Match IFC Asset and Describe Issue</strong> checks the candidate object and describes/classifies the issue. Structured parsers validate the model outputs.</li>
+<li><strong>Submit Ticket for FM Authorization</strong> calls <code>cbm_capture_identified()</code>; ticket creation/reuse happens through <code>cbm_create_ticket()</code>.</li>
+</ol>
+<p>At this point the report should be <code>IDENTIFIED</code> and the ticket normally <code>PENDING_AUTHORIZATION</code>. A report is the photo session; a ticket is the maintenance job. Earlier localization failures create attempts on the report, not a new maintenance job each time.</p>
+<h3>Step 3 — Act as the FM: authorize the intervention</h3>
+<p>Open the authorization message at <code>gruppo1isteagiovani@gmail.com</code>. Open the supplied link and submit the confirmation form. Merely opening a page does not authorize dispatch.</p>
+<p>After ticket creation, WF1 immediately claims and sends that ticket's FM authorization email, including the secure approval link, and records Gmail's receipt. The separate submitter receipt is informational and cannot authorize the intervention. Recovery runs every minute to deliver outstanding notifications; if no ticket is eligible for dispatch, only the dispatch branch stops. If authorization remains pending, recovery queues one reminder 24 hours after the original email was sent; expiry after 72 hours creates a fresh link.</p>
+<ul>
+<li>Approve: PostgreSQL records authorization and the ticket becomes eligible for dispatch (<code>LOCALIZED</code>).</li>
+<li>Reject: the request becomes <code>REJECTED</code>; no offer should be sent.</li>
+</ul>
+<p>This first FM decision authorizes starting the maintenance intervention. WF2 later asks for a separate decision about the completed work.</p>
+<h3>Step 4 — Let the Dispatch Agent work</h3>
+<p>Authorization callbacks and the minute recovery tick can start Phase B. <strong>Claim One Dispatch Ticket</strong> binds one ticket to the execution. The agent reads that ticket&#39;s context, initializes its eligible shortlist, sends the opening notice and offers, and processes persisted responses. The overview can show other tickets; mutation tools remain scoped to the selected ticket.</p>
+<p>The agent finishes when no immediate action remains. It does not sit running while a technician is deciding. A response or a later recovery tick resumes processing.</p>
+<h3>Step 5 — Act as the technician: accept</h3>
+<p>Open the offer in <code>giuseppe.desiderio123@gmail.com</code>, select acceptance and submit its confirmation page. WF1 records the response, chooses the valid winner and updates the ticket to <code>ASSIGNED</code>.</p>
+<p>Wait for the assignment confirmation. <strong>That email contains “Compila il rapporto / Complete technician report”.</strong> Keep the personal link; it is the entry point for section 8. An accepted offer and a completed assignment are separate checkpoints.</p>
+<h3>If identification fails</h3>
+<p>The retry email contains the existing report UUID. Preserve it when preparing a replacement:</p>
+<pre><code class="language-powershell">$reportId = Read-Host &#39;Paste the report UUID from the retry email&#39;
+.\scripts\demo\Prepare-CaseStudyPhotos.ps1 -ReporterEmail &#39;giuseppe.desiderio123@gmail.com&#39; -Photo &#39;IMG_7915.JPG&#39; -ReportId $reportId
+</code></pre>
+<p>Upload the resulting replacement as a <strong>new Drive file</strong>. A new UUID creates a different report; the same email alone does not group photos. Each accepted photo has its own execution but shares the report counter.</p>
+<p>Registration and IFC-service configuration faults instead enter <code>CONFIGURATION_REQUIRED</code>: they do not consume a photo attempt or request a replacement photo. Repair the configuration and run the SAME Drive file through WF1 again. The retained file ID and report are reused, with pause/resume history stored in <code>cbm_capture_configuration_events</code>.</p>
+<p><strong>The installed limit is one original plus three replacements: four attempts total.</strong> If all four fail, the report becomes <code>IT_ISSUE</code> and the IT notification is queued. Do not upload all replacements together: wait for the result before selecting a useful new view.</p>
+<p>For duplicate jobs, the same source file reuses its ticket; an already-open ticket for the same IFC GlobalId is also reused. A closed/rejected/duplicate ticket does not block a later new report on that asset.</p>
+<h2 id="section-8">8. Submit the technician report through the new page</h2>
+<h3>What the technician does</h3>
+<ol>
+<li>Open the report link in the assignment email. It expires after 30 days and is tied to the assigned technician and ticket.</li>
+<li>Check the prefilled ticket, technician and asset details. Those fields come from PostgreSQL and are read-only.</li>
+<li>Fill in the work date, findings, work performed, materials, checks, outcome and any remaining issues. The form uses Italian and English labels.</li>
+<li>Optionally attach one intervention photo and describe what it shows. The image limit is 10 MiB; the browser resizes the image before embedding it.</li>
+<li>Confirm the declaration and press <strong>Invia rapporto / Submit report</strong>. Reloading before submission discards unsent edits.</li>
+<li>Wait for the successful submission page. It means the PDF was uploaded for review; it does not mean the ticket is closed.</li>
+</ol>
+<p>The browser generates <code>TICKET-&lt;id&gt;.pdf</code> containing the written report and optional photo. The portal validates the current assignment, checks required content against the PDF, claims one submission for the current approval cycle and uploads to the completed Drive folder. The PDF limit is 8 MiB. A repeat submission does not blindly create a second file.</p>
+<h3>How WF2 receives it</h3>
+<p>The <strong>Completed Upload (Drive Trigger)</strong> sees the PDF within its polling interval. No Gmail attachment ingestion was added. Gmail delivers the links and notifications; Drive remains the input to WF2.</p>
+<p>The two public portal routes use the same path, <code>/webhook/cbm-technician-report</code>: GET displays the authenticated form and POST submits it. The ticket-specific token is supplied by the email. The link is personal and should not be shared as a generic demo URL.</p>
+<h3>Manual fallback</h3>
+<p>Open <code>cbm/templates/technician-report/technician-report.html</code> from the release or deployment folder. This editable offline form generates a PDF with the photo. Enter the real assigned ticket ID, download its <code>TICKET-&lt;id&gt;.pdf</code>, then upload that PDF to the completed folder. The offline form does not perform the portal&#39;s assignment validation and duplicate claim.</p>
+<p>You can attach the PDF to a human email if useful, but sending it through Gmail alone will not start WF2. The existing blank PDF is a printable example; the HTML form is the editable template.</p>
+<h2 id="section-9">9. Run WF2: report to verified closure</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Stage / nodes</th>
+<th>What to inspect</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Extract Ticket ID → Fetch Ticket → Ticket Open and Assigned?</td>
+<td>Filename resolves to the intended ticket; it has a current technician</td>
+</tr>
+<tr>
+<td>Download Report PDF → Extract Report Text and Photo</td>
+<td>Python <code>/reports/extract</code> returns text, page count, extraction quality and available photo evidence</td>
+</tr>
+<tr>
+<td>Photo Available? / Verification Images Ready?</td>
+<td>A missing intervention photo is explicit. Comparison runs only with usable images</td>
+</tr>
+<tr>
+<td>Assess Completion (Report) → Parse Completion Assessment</td>
+<td>Written evidence is assessed; lack of visual evidence remains visible</td>
+</tr>
+<tr>
+<td>Set Pending Approval → FM Approval (Email + Wait)</td>
+<td>Ticket is <code>PENDING_APPROVAL</code>; FM receives the second approval request</td>
+</tr>
+<tr>
+<td>Persist FM Decision → Closure Supervisor</td>
+<td>Tools act on the recorded decision and current approval cycle</td>
+</tr>
+<tr>
+<td>log_ifc_maintenance</td>
+<td>Calls the <strong>WF2 Guarded IFC Write</strong> helper; Python writes and verifies the new IFC version</td>
+</tr>
+<tr>
+<td>close_ticket / update_technician_stats / notification tools</td>
+<td>Records closure/statistics and sends the required FM and technician notices</td>
+</tr>
+<tr>
+<td>Verify Closure Outcome → Closure Settled?</td>
+<td>Verifies all required stored outcomes and email receipts</td>
+</tr>
+</tbody></table></div>
+<h3>FM approves completed work</h3>
+<p>Use the new approval message&#39;s controls. The closure supervisor must record a successful IFC update and a real new version before closing the ticket. Successful completion should show <code>CLOSED</code>, a nonempty <code>ifc_new_version</code>, the current approval&#39;s successful IFC event, updated statistics and both required notification receipts.</p>
+<p>An IFC error blocks closure. A closed ticket with a missing notification receipt is still an <strong>unsettled workflow outcome</strong> and requires attention. An API receipt confirms Gmail accepted the send; it is not proof that a person read the email.</p>
+<h3>FM asks for rework</h3>
+<p>Rejection of completion changes the ticket to <code>REWORK</code>. The technician notification includes a report link for the revised work. After the correction, submit a new report for that approval cycle and let WF2 request another FM decision. The portal permits the new cycle while preserving the previous submission history.</p>
+<h2 id="section-10">10. Use WF3 at the end</h2>
+<p>Configure the <strong>FM Chat</strong> Basic Auth credential before exposing the chat. Ask concrete questions such as “Show ticket 1 and its history” or “Which tickets still need attention?” The dashboard tools read stored facts; they do not assign or close tickets.</p>
+<p>The weekly route collects data, creates report tables, adds a narrative and sends the styled email. Its configured schedule is <strong>Monday at 07:00, Europe/Rome</strong>. A manual run that reaches <strong>Email Weekly Report</strong> sends a real message. For a preview, stop before that node and inspect <strong>Compose Weekly Email</strong>.</p>
+<p>The approved knowledge library is a separate feature. An empty approved library is possible; do not treat an unrelated technical sheet as evidence for the office asset. The optional OCR import currently needs its Mistral credential repaired.</p>
+<h2 id="section-11">11. Inspect the database and services</h2>
+<p>From the deployment PowerShell shell, enter an interactive database session:</p>
+<pre><code class="language-powershell">.\scripts\deployment\Cbm-Compose.ps1 exec cbm-postgres psql -U cbm_app -d cbm_demo
+</code></pre>
+<p>Run these read-only queries. They omit bearer tokens and email bodies:</p>
+<pre><code class="language-sql">SELECT id, status, ifc_name, technician_id,
+       dispatch_authorized_at, ifc_new_version, created_at
+FROM tickets ORDER BY id DESC LIMIT 10;
+
+SELECT id, reporter_email, state, attempts, ticket_id
+FROM cbm_intake_reports ORDER BY created_at DESC LIMIT 10;
+
+SELECT report_id, attempt, status, reason, file_id
+FROM cbm_capture_attempts ORDER BY started_at DESC LIMIT 10;
+
+SELECT ticket_id, approval_cycle, status, drive_file_id, submitted_at
+FROM cbm_technician_submissions ORDER BY created_at DESC LIMIT 10;
+
+SELECT ticket_id, event, created_at
+FROM ticket_events ORDER BY id DESC LIMIT 30;
+</code></pre>
+<p>To inspect SQL function definitions:</p>
+<pre><code class="language-sql">\sf cbm_capture_begin
+\sf cbm_capture_failed
+\sf cbm_technician_report_access
+\q
+</code></pre>
+<p>Read the last service logs without restarting anything:</p>
+<pre><code class="language-powershell">.\scripts\deployment\Cbm-Compose.ps1 logs --tail 60 n8n ifc-service cbm-postgres
+</code></pre>
+<p>Use n8n&#39;s execution data to inspect the selected ticket, diagnostic reason, model output, helper result and settled check. Avoid sharing complete node dumps containing images, private links or credentials.</p>
+<h2 id="section-12">12. Troubleshooting at the relevant checkpoint</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Check / next action</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>No execution after uploading</td>
+<td>WF1/WF2 published, correct watched folder, valid Drive credential, new file, next poll</td>
+</tr>
+<tr>
+<td>Email link returns webhook 404</td>
+<td>Corresponding workflow published, production <code>/webhook/</code> URL, current ngrok domain</td>
+</tr>
+<tr>
+<td>Drive works but email fails</td>
+<td>Reconnect <strong>Gmail account 3</strong>, not the Drive credential</td>
+</tr>
+<tr>
+<td>MultiSet token 401/403</td>
+<td>Client ID/Secret, active credential/account and scope; account email is not the API username</td>
+</tr>
+<tr>
+<td>Token works but localization fails</td>
+<td>Map access/readiness, original image and intrinsics, query response; inspect failure reason</td>
+</tr>
+<tr>
+<td>Registration required / no trustworthy IFC match</td>
+<td>Complete measured map-to-IFC alignment; no forced bypass</td>
+</tr>
+<tr>
+<td>Another photo creates another session</td>
+<td>Reuse the original report UUID in the new filename</td>
+</tr>
+<tr>
+<td>Dispatch escalates without an offer</td>
+<td>Check active technician, required skill, zone, capacity and stored eligibility reason</td>
+</tr>
+<tr>
+<td>Report page unavailable</td>
+<td>Valid personal link, unexpired token, accepted current assignment, ticket status</td>
+</tr>
+<tr>
+<td>Report already submitted</td>
+<td>Inspect the completed Drive folder and WF2 execution; do not upload another copy blindly</td>
+</tr>
+<tr>
+<td>Submission “unconfirmed”</td>
+<td>An upload may have succeeded without its receipt. Reconcile the Drive file and submission row before resetting/retrying</td>
+</tr>
+<tr>
+<td>PDF unreadable / empty</td>
+<td>Inspect extraction error; submit the generated report with actual written content</td>
+</tr>
+<tr>
+<td>No intervention photo</td>
+<td>Report still proceeds with limited evidence; FM decides whether rework is necessary</td>
+</tr>
+<tr>
+<td>IFC error after FM approval</td>
+<td>Ticket must stay unclosed; inspect Guarded IFC Write and Python logs</td>
+</tr>
+<tr>
+<td>CLOSED but Closure Settled? is false</td>
+<td>Inspect missing receipts/statistics/current approval proof; status alone is insufficient</td>
+</tr>
+</tbody></table></div>
+<h2 id="section-13">13. Finish a demonstration and restart later</h2>
+<p>Record the report UUID, ticket ID, important execution IDs and final IFC version. Unpublish the entry workflows when you want to stop new trigger activity; existing waiting executions need separate attention. To stop the local services while retaining their volumes:</p>
+<pre><code class="language-powershell">.\scripts\deployment\Cbm-Compose.ps1 stop
+</code></pre>
+<p>Start again with section 3. Keep existing database and IFC volumes. A new valid report on an asset whose earlier ticket is closed can create a new maintenance ticket; do not erase the database between demonstrations merely to obtain a new ID.</p>
+<h2 id="section-14">14. What was implemented and tested in this update</h2>
+<ul>
+<li>Added the bilingual web portal workflow and Python template endpoint.</li>
+<li>Added ticket-bound report links to existing assignment and rework notifications.</li>
+<li>Added persistent submission claims and Drive receipts, with one submission per approval cycle.</li>
+<li>Preserved the existing main workflows and WF2&#39;s strict IFC/notification completion rules.</li>
+<li>Fixed the technician setup script so a repeated email uses one identity; configured your controlled address.</li>
+<li>Passed 32 portal checks covering authorization, expiry, assignment, duplicate/rework behavior and workflow construction; dispatch and strict-closure regression checks also passed.</li>
+<li>Tested text submission inside a sandboxed browser frame. Generated PDFs with and without a photo passed the actual Python extractor and portal validator; rendered PDF pages were visually checked.</li>
+</ul>
+<p><strong>Validation boundary:</strong> the browser automation could not operate the photo file picker reliably, so a real user photo selection followed by a live Drive upload remains an acceptance test. No full MultiSet/Gmail/Drive maintenance lifecycle was claimed or executed. The new portal remains inactive until the demonstration is enabled.</p>
+<h2 id="section-15">WF1 direct intake and vision correction — 17 September</h2>
+<p><code>Process Each Drive Capture</code> and <code>One Capture Input</code> were removed. The Drive trigger now connects directly to <code>Capture Input</code>; the current execution continues through Phase A. This removes the waiting parent/child pair. A direct connection does not change n8n&#39;s deployment concurrency limits or make the current execution finish before its model calls.</p>
+<p>Execution 283 returned a valid image observation: image quality good, radiator selected, no target ambiguity. The JavaScript validator incorrectly counted floor tiles and skirting as competing objects. The corrected guard considers substantial alternative maintenance targets, preserves confidence/ambiguity/schema checks, and exposes <code>visionChecks</code> so the decision is inspectable. The selected models and prompts were preserved.</p>
+<p>Validation: 12 vision regression cases; real n8n execution with three photos in one batch, the existing LLM Chain and Structured Output Parser nodes, isolated PostgreSQL and local provider simulators. Two clear files reached FM authorization with the correct assets/reporters, the unclear file requested a replacement, and duplicates made no extra provider calls. No live ticket or email was created by these tests.</p>
+<h2 id="section-16">MultiSet DNS and provider failures</h2>
+<p>The two MultiSet HTTP nodes retry a transient DNS/network failure four times, waiting two seconds between attempts. If all attempts fail, <code>Pause for MultiSet Service Error</code> records <code>MULTISET_SERVICE_UNAVAILABLE</code>. PostgreSQL changes the report to <code>CONFIGURATION_REQUIRED</code>, restores the reserved photo allowance and retains the same Drive file. Run that same file again after the provider or network recovers; a replacement photograph is not required.</p>
+<p>Execution 284 failed because Docker temporarily could not resolve <code>api.multiset.ai</code>. Host and container DNS subsequently resolved the name, and authenticated map metadata was read successfully. The attempt recorded by execution 284 was restored. The existing execution remains in history for diagnosis.</p>
+<footer>Local guide. Private API keys and personal report tokens are not included.</footer></main></div></body></html>

@@ -4,7 +4,7 @@
 
 WF3 now also acts on explicit FM requests through five guarded workflow tools:
 `approve_intervention`, `reject_intervention`, `resend_approval_email`,
-`approve_completion`, and `request_rework`. See [the action guide](../../../WF3_FM_ACTIONS.md)
+`approve_completion`, and `request_rework`. See [the action guide](../../../docs/wf3/WF3_FM_ACTIONS.md)
 for states, helper reuse, email confirmation and retry behavior. The live chat uses
 the user's current `n8nUserAuth` setting and 50-turn memory.
 

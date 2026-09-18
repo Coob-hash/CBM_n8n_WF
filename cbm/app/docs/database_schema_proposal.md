@@ -2,7 +2,7 @@
 
 # CBM PostgreSQL database schema proposal
 
-Approved design baseline. The database implementation is now in `database/migrations/`; see [implementation and setup](../database/README.md) for the installed objects, transaction functions and validation limits. This document remains the approved logical design. The legacy `schema.sql` and existing workflow exports remain unchanged pending integration.
+Approved design baseline. The database implementation is now in `database/migrations/`; see [implementation and setup](../../../database/README.md) for the installed objects, transaction functions and validation limits. This document remains the approved logical design. The legacy `schema.sql` and existing workflow exports remain unchanged pending integration.
 
 ## Scope and design decisions
 

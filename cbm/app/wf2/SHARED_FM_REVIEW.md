@@ -23,7 +23,7 @@ Approval links expire after 72 hours. The next poll requests a renewed link and 
 
 `shared_review.py` preserves an exported workflow and extends only WF2 and the existing approval email helper. Run its idempotent `extend_wf2` and `extend_email` transformations after any legacy builder that recreates those workflows. Do not import an older generated payload over these current definitions.
 
-`Install-Wf2SharedReview.ps1` installs the reviewed payload and synchronizes the local exports. Publish the shared email helper first, then WF2. The installer does not execute workflows or send test messages.
+`scripts/wf2/Install-Wf2SharedReview.ps1` installs the reviewed payload and synchronizes the local exports. Publish the shared email helper first, then WF2. The installer does not execute workflows or send test messages.
 
 An execution already waiting in the former Gmail node retains its original workflow snapshot; publishing cannot retrofit it. Start a new test from a suitable checkpoint rather than retrying the old snapshot. No unfinished WF2 executions were present at installation.
 
