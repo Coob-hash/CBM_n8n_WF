@@ -36,7 +36,7 @@ The issue description, severity and required skill remain provisional. Intake cr
 
 ## Rebuild, installation and validation
 
-`scripts/workflows/Prepare-CbmWorkflows.ps1` reapplies the updated overlays; it does not restore the batch or image-review branch. `scripts/dispatch/Install-SingleTicketUpdate.ps1` backs up affected deployment files, updates the bundled application's SQL functions and imports only the inactive source WF1 draft. It preserves existing credential bindings and the source workflow name/ID.
+`scripts/workflows/Prepare-CbmWorkflows.ps1` reapplies the updated overlays; it does not restore the batch or image-review branch. The one-off `Install-SingleTicketUpdate.ps1` that installed this update has been removed: its WF1 snapshot is older than the current source, and its queue SQL is now applied by `scripts/deployment/Apply-CbmIntakeMigration.ps1`. At the time it backed up affected deployment files, updated the bundled application's SQL functions and imported only the inactive source WF1 draft. It preserved existing credential bindings and the source workflow name/ID.
 
 Validation evidence is in `validation-single-ticket`: 11 database/context tests, 12 vision contract/graph tests, graph/preservation checks and the 20 existing dispatch policy/helper tests. Test emails and receipts are mocked. This does not constitute a live MultiSet-to-IFC validation.
 

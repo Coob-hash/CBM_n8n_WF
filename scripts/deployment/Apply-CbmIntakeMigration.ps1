@@ -17,7 +17,7 @@ try {
     [IO.File]::WriteAllText((Join-Path $backup 'cbm_demo.sql'),($dump -join "`n")+"`n",(New-Object Text.UTF8Encoding $false))
     # Read the mounted files directly. PowerShell script wrappers do not automatically
     # forward piped SQL to a native process's stdin.
-    foreach ($sql in @('/docker-entrypoint-initdb.d/02-dispatch.sql','/docker-entrypoint-initdb.d/07-intake.sql','/docker-entrypoint-initdb.d/10-wf2-strict-closure.sql','/docker-entrypoint-initdb.d/11-technician-portal.sql')) {
+    foreach ($sql in @('/docker-entrypoint-initdb.d/02-dispatch.sql','/docker-entrypoint-initdb.d/07-intake.sql','/docker-entrypoint-initdb.d/08-dispatch-queue.sql','/docker-entrypoint-initdb.d/09-dispatch-context.sql','/docker-entrypoint-initdb.d/10-wf2-strict-closure.sql','/docker-entrypoint-initdb.d/11-technician-portal.sql')) {
         & '.\scripts\deployment\Cbm-Compose.ps1' exec -T cbm-postgres psql -X -U cbm_app -d cbm_demo -v ON_ERROR_STOP=1 -f $sql
         if ($LASTEXITCODE -ne 0) { throw "Migration failed: $sql. Inspect the error; backup: $backup" }
     }

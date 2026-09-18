@@ -22,16 +22,18 @@ foreach ($file in (Get-ChildItem -LiteralPath $target -File)) {
 if (Test-Path -LiteralPath (Join-Path $target 'cbm')) {
     Copy-Item -LiteralPath (Join-Path $target 'cbm') -Destination (Join-Path $backup 'cbm') -Recurse
 }
-$rootFiles = @('Dockerfile','docker-compose.yml','.dockerignore','.gitignore','scripts\deployment\Initialize-Cbm.ps1','scripts\deployment\Cbm-Compose.ps1','scripts\deployment\Start-Cbm.ps1','scripts\deployment\Test-Cbm.ps1','scripts\workflows\Prepare-CbmWorkflows.ps1','scripts\workflows\Apply-CbmCompatibility.ps1','scripts\demo\Set-CbmDemoTechnicians.ps1','README.md','docs\guides\CBM_Demo_Tutorial.md')
-$rootFiles += @('scripts\demo\Prepare-CaseStudyPhotos.ps1','docs\guides\CASE_STUDY_GUIDE.md','docs\guides\INTAKE_APPROVAL_GUIDE.md','scripts\deployment\Apply-CbmIntakeMigration.ps1')
-foreach ($name in $rootFiles) {
-    $from = Join-Path $RepoRoot $name
-    if (-not (Test-Path -LiteralPath $from)) { throw "Incomplete extension package: $name" }
+$rootFiles = @('Dockerfile','docker-compose.yml','.dockerignore','.gitignore','README.md')
+foreach ($name in $rootFiles + @('scripts','docs','database')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $RepoRoot $name))) { throw "Incomplete extension package: $name" }
 }
-foreach ($name in $rootFiles) {
-    $destination = Join-Path $target $name
-    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
-    Copy-Item -LiteralPath (Join-Path $RepoRoot $name) -Destination $destination -Force
+foreach ($name in $rootFiles) { Copy-Item -LiteralPath (Join-Path $RepoRoot $name) -Destination (Join-Path $target $name) -Force }
+# Operator scripts and guides are copied whole so every group keeps its relative layout.
+foreach ($folder in @('scripts','docs')) {
+    foreach ($file in (Get-ChildItem -LiteralPath (Join-Path $RepoRoot $folder) -File -Recurse | Where-Object { $_.FullName -notmatch '__pycache__' })) {
+        $destination = Join-Path $target ([IO.Path]::GetRelativePath($RepoRoot,$file.FullName))
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
+        Copy-Item -LiteralPath $file.FullName -Destination $destination -Force
+    }
 }
 # docker-compose.yml mounts the init SQL from database/.
 foreach ($file in (Get-ChildItem -LiteralPath (Join-Path $RepoRoot 'database') -Filter '*.sql' -File -Recurse)) {
@@ -59,6 +61,5 @@ if ($private -match '(?m)^MULTISET_MAP_CODE=') {
     $private = [regex]::Replace($private,'(?m)^MULTISET_MAP_CODE=[^\r\n]*','MULTISET_MAP_CODE=MAP_J964JX6MGEGO')
 } else { $private += "`nMULTISET_MAP_CODE=MAP_J964JX6MGEGO`n" }
 [IO.File]::WriteAllText($privatePath,$private,(New-Object Text.UTF8Encoding $false))
-& (Join-Path $target 'scripts\workflows\Apply-CbmCompatibility.ps1')
 Write-Output "Installed extension files. Original configuration backup: $backup"
-Write-Output 'The existing .env and n8n_test data were preserved. Start-Cbm.ps1 performs the backed-up container update.'
+Write-Output 'The existing .env and n8n_test data were preserved. scripts\deployment\Start-Cbm.ps1 performs the backed-up container update; scripts\workflows\Prepare-CbmWorkflows.ps1 then prepares the workflow exports.'
