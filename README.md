@@ -10,7 +10,7 @@ This separate release extends the Maddaloni case-study demo with the agreed proc
 
 - One initial photo and up to three replacement photos, linked by report UUID and persisted in PostgreSQL.
 - Automatic VPS/IFC/vision asset identification; unresolved captures request another photo, with no FM asset selection.
-- A persistent bug issue and IT notification after the fourth failed capture. IT defaults to giuseppe.desiderio123@gmail.com.
+- A persistent bug issue and IT notification after the fourth failed capture. IT defaults to your_email@....
 - Mandatory FM authorization before dispatch; rejection contacts no technician. WF2 completion acceptance remains separate.
 
 Start with [INTAKE_APPROVAL_GUIDE.md](docs/guides/INTAKE_APPROVAL_GUIDE.md), then [CBM_Demo_Tutorial.md](docs/guides/CBM_Demo_Tutorial.md) for every workflow and trigger. [CASE_STUDY_GUIDE.md](docs/guides/CASE_STUDY_GUIDE.md) retains the IFC, E57, photo and intrinsics audit.
